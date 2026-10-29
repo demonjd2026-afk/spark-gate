@@ -1,0 +1,58 @@
+# Spark Gate configuration. Secrets are never stored here: each endpoint names the
+# environment variable that holds its key.
+
+baseline: muse-spark-1.1            # the version the agent runs on today
+candidates:                          # versions you are considering
+  - muse-spark-1.2
+  - muse-spark-1.3
+  - muse-glimmer-30b
+
+traces: traces/support_agent.jsonl
+
+endpoints:
+  meta:                              # Meta Model API (OpenAI-compatible)
+    base_url: https://api.meta.ai/v1
+    api_key_env: MODEL_API_KEY
+  glimmer:                           # any OpenAI-compatible host serving Muse Glimmer weights
+    base_url_env: GLIMMER_BASE_URL   # e.g. your Baseten / Fireworks / Modal / Together endpoint
+    api_key_env: GLIMMER_API_KEY
+
+models:
+  # Standard tier (prompts are not used for training). USD per million tokens.
+  muse-spark-1.1: {endpoint: meta, input_per_mtok: 1.25, output_per_mtok: 4.25, cached_input_per_mtok: 0.15}
+  muse-spark-1.2: {endpoint: meta, input_per_mtok: 1.25, output_per_mtok: 4.25, cached_input_per_mtok: 0.15}
+  muse-spark-1.3: {endpoint: meta, input_per_mtok: 1.25, output_per_mtok: 4.25, cached_input_per_mtok: 0.15}
+  muse-glimmer-30b:
+    endpoint: glimmer
+    wire_model: meta-models/Muse-Glimmer-30B   # the id your host expects; change to match it
+    # Set to your host's per-token rate. Leave unset for per-GPU-hour hosting: the cost
+    # check is then skipped for this model instead of reporting a made-up number.
+    input_per_mtok: 0.30
+    output_per_mtok: 1.20
+
+judge:                               # pairwise, position-swapped quality judge
+  enabled: true
+  model: muse-spark-1.3
+
+fixer:                               # diagnoses each regression pattern and proposes a prompt fix
+  enabled: true
+  model: muse-spark-1.3
+  max_patterns: 4
+  examples_per_pattern: 3
+
+gate:
+  min_tool_fidelity: 0.90            # share of traces with the same tool sequence as baseline
+  min_schema_valid: 0.95             # share of final answers that validate against the schema
+  max_quality_loss: 0.10             # share of traces the judge says got worse (both orderings)
+  max_latency_p95_ratio: 1.50
+  max_cost_ratio: 1.50
+  max_errors: 0
+
+runtime:
+  concurrency: 6
+  max_tool_turns: 8
+  temperature: 0
+  max_output_tokens: 2048
+  request_timeout_s: 120
+  max_retries: 5
+  budget_usd: 15                     # hard ceiling for one run

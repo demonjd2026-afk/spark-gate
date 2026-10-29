@@ -1,0 +1,44 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "sparkgate"
+version = "0.1.0"
+description = "Spark Gate — a CI safety gate for Muse Spark model upgrades: replay real agent traces across versions, diff behavior, and block the PR when the upgrade would break you."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Jayanth Dolai" }]
+dependencies = [
+    "openai>=1.50",
+    "pydantic>=2.8",
+    "pydantic-settings>=2.4",
+    "typer>=0.12",
+    "rich>=13.7",
+    "duckdb>=1.0",
+    "jsonschema>=4.22",
+    "referencing>=0.35",
+    "pyyaml>=6.0",
+    "tenacity>=8.4",
+    "certifi>=2026.10.19",  # floor above a published advisory (transitive via httpx)
+]
+
+[project.optional-dependencies]
+app = ["streamlit>=1.38", "plotly>=5.22", "pandas>=2.2", "pillow>=13.0.0"]
+dev = ["pytest>=8.2", "pytest-asyncio>=0.23", "ruff>=0.5"]
+
+[project.scripts]
+sparkgate = "sparkgate.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/sparkgate"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["."]

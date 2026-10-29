@@ -1,0 +1,35 @@
+# Runs Spark Gate when the agent, its prompt, its traces or the gate config change.
+name: spark-gate
+
+on:
+  pull_request:
+    paths:
+      - "sparkgate.yaml"
+      - "traces/**"
+      - "demo/support_agent/**"
+
+permissions:
+  contents: read
+  pull-requests: write   # only to post the report comment
+
+concurrency:
+  group: sparkgate-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    # Secrets are not exposed to pull requests from forks; skip instead of failing.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./
+        env:
+          MODEL_API_KEY: ${{ secrets.MODEL_API_KEY }}
+          GLIMMER_BASE_URL: ${{ secrets.GLIMMER_BASE_URL }}
+          GLIMMER_API_KEY: ${{ secrets.GLIMMER_API_KEY }}
+        with:
+          config: sparkgate.yaml
