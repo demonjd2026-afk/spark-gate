@@ -101,6 +101,9 @@ def run(
     fail_on: Annotated[
         str, typer.Option(help="Exit 1 when any candidate is: dont_ship | not_ship | never")
     ] = "dont_ship",
+    strict: Annotated[
+        bool, typer.Option("--strict", help="Fail instead of skipping candidates without keys")
+    ] = False,
     verbose: Annotated[bool, typer.Option("--verbose", "-v")] = False,
 ) -> None:
     """Replay traces across models, diff behavior, and print a ship / don't-ship verdict."""
@@ -114,8 +117,18 @@ def run(
     except TraceFileError as exc:
         console.print(f"[red]trace error:[/] {exc}")
         raise typer.Exit(2) from exc
+    skipped: dict[str, str] = {}
+    if not strict:
+        try:
+            cfg, skipped = cfg.split_available()
+        except ConfigError as exc:
+            console.print(f"[red]config error:[/] {exc}")
+            raise typer.Exit(2) from exc
+        for model, reason in skipped.items():
+            console.print(f"[yellow]skipping {model}[/] ({reason})")
     try:
         report = asyncio.run(_execute(cfg, traces))
+        report.skipped_candidates = skipped
     except ConfigError as exc:
         console.print(f"[red]config error:[/] {exc}")
         raise typer.Exit(2) from exc
@@ -205,6 +218,23 @@ def calibrate(
 def validate(config: ConfigOpt = Path("sparkgate.yaml")) -> None:
     """Check the config and trace file without calling any model."""
     cfg = _load(config, None)
+    table = Table(title="Models")
+    for col in ("model", "role", "hosting", "served by", "status"):
+        table.add_column(col)
+    roles: dict[str, list[str]] = {}
+    roles.setdefault(cfg.baseline, []).append("baseline")
+    for m in cfg.candidates:
+        roles.setdefault(m, []).append("candidate")
+    if cfg.judge.enabled:
+        roles.setdefault(cfg.judge.model, []).append("judge")
+    if cfg.fixer.enabled:
+        roles.setdefault(cfg.fixer.model, []).append("fixer")
+    for m, r in roles.items():
+        mc = cfg.models[m]
+        reason = cfg.unavailable(m)
+        table.add_row(m, ", ".join(r), mc.hosting.replace("_", " "), mc.served_by or "-",
+                      f"[yellow]{reason}[/]" if reason else "[green]ready[/]")
+    console.print(table)
     try:
         traces = load_traces(cfg.traces)
     except TraceFileError as exc:
@@ -219,12 +249,6 @@ def validate(config: ConfigOpt = Path("sparkgate.yaml")) -> None:
         f"baseline {cfg.baseline} · "
         f"candidates {', '.join(cfg.candidates)}"
     )
-    missing = []
-    for name, ep in cfg.endpoints.items():
-        if not os.environ.get(ep.api_key_env):
-            missing.append(f"{name} ({ep.api_key_env})")
-    if missing:
-        console.print(f"[yellow]keys not set for:[/] {', '.join(missing)}")
 
 
 @app.command()

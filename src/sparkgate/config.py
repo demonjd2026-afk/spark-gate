@@ -48,6 +48,12 @@ class EndpointConfig(BaseModel):
             return url.rstrip("/")
         raise ConfigError(f"endpoint URL must be https (http allowed for localhost only): {url}")
 
+    def unavailable_reason(self) -> str | None:
+        """Why this endpoint can't be used right now (missing env vars), or None."""
+        missing = [v for v in (self.base_url_env if not self.base_url else None, self.api_key_env)
+                   if v and not os.environ.get(v, "").strip()]
+        return f"not set: {', '.join(missing)}" if missing else None
+
     def resolve_key(self) -> SecretStr:
         key = os.environ.get(self.api_key_env, "").strip()
         if not key:
@@ -62,6 +68,8 @@ class ModelConfig(BaseModel):
 
     endpoint: str
     wire_model: str | None = None  # id sent on the wire, if different from the config key
+    hosting: Literal["meta_api", "open_weights"] = "meta_api"
+    served_by: str | None = None  # display name of the host, e.g. "Baseten"
     input_per_mtok: float | None = Field(default=None, ge=0)
     output_per_mtok: float | None = Field(default=None, ge=0)
     cached_input_per_mtok: float | None = Field(default=None, ge=0)
@@ -158,6 +166,29 @@ class GateConfig(BaseModel):
 
     def with_candidates(self, candidates: list[str]) -> GateConfig:
         return self.model_validate({**self.model_dump(), "candidates": candidates})
+
+    def unavailable(self, model: str) -> str | None:
+        return self.endpoints[self.models[model].endpoint].unavailable_reason()
+
+    def split_available(self) -> tuple[GateConfig, dict[str, str]]:
+        """Drop candidates whose endpoint has no credentials yet.
+
+        Returns the trimmed config and {model: reason} for every candidate skipped.
+        The baseline, judge and fixer are never dropped silently; `ConfigError` instead.
+        """
+        required = {self.baseline}
+        if self.judge.enabled:
+            required.add(self.judge.model)
+        if self.fixer.enabled:
+            required.add(self.fixer.model)
+        for m in sorted(required):
+            if reason := self.unavailable(m):
+                raise ConfigError(f"{m} is required but its endpoint is unusable ({reason})")
+        skipped = {m: r for m in self.candidates if (r := self.unavailable(m))}
+        keep = [m for m in self.candidates if m not in skipped]
+        if not keep:
+            raise ConfigError(f"no candidate has credentials configured: {skipped}")
+        return (self.with_candidates(keep) if skipped else self), skipped
 
 
 def load_config(path: str | Path) -> GateConfig:

@@ -18,6 +18,7 @@ from pydantic import ValidationError
 
 from sparkgate.gate import PERCENT_CHECKS
 from sparkgate.policy import describe
+from sparkgate.report import hosting_label
 from sparkgate.schemas import (
     CalibrationReport,
     CandidateMetrics,
@@ -64,6 +65,7 @@ h1, h2, h3 {{ font-family: 'Archivo', sans-serif; font-stretch: 112%; letter-spa
   gap:18px; background:#232D3A; border-radius:8px; padding:14px 18px; }}
 .sg-lamp {{ width:30px; height:30px; border-radius:50%; margin:auto; box-shadow:0 0 0 5px #11171F, 0 0 22px 2px var(--glow); }}
 .sg-model {{ font-family:'Archivo'; font-stretch:118%; font-weight:800; font-size:1.35rem; color:#F3F6FA; }}
+.sg-host {{ color:#8FA0B5; font-size:.8rem; margin:.1rem 0 .15rem; }}
 .sg-call {{ font-family:'Archivo'; font-weight:700; font-size:.95rem; }}
 .sg-why {{ color:#B8C3D1; font-size:.9rem; line-height:1.45; }}
 .sg-why b {{ color:#F3F6FA; font-weight:600; }}
@@ -164,8 +166,15 @@ def signal_board(report: RunReport) -> str:
         rows.append(
             f'<div class="sg-plate"><div class="sg-lamp" style="background:{color};--glow:{color}66"></div>'
             f'<div><div class="sg-model">{esc(v.candidate_model)}</div>'
+            f'<div class="sg-host">{esc(hosting_label(report, v.candidate_model))}</div>'
             f'<div class="sg-call" style="color:{color}">{esc(call)}</div></div>'
             f'<div class="sg-why">{why}</div></div>'
+        )
+    for model, reason in report.skipped_candidates.items():
+        rows.append(
+            f'<div class="sg-plate"><div class="sg-lamp" style="background:#3A4656;--glow:#0000">'
+            f'</div><div><div class="sg-model">{esc(model)}</div><div class="sg-call" '
+            f'style="color:#8FA0B5">Not run</div></div><div class="sg-why">{esc(reason)}</div></div>'
         )
     return f'<div class="sg-board" role="list">{"".join(rows)}</div>'
 

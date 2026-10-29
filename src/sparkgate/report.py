@@ -43,6 +43,14 @@ def _fmt(check: ThresholdCheck) -> str:
     return f"| {check.name} | {actual} | {op} {f(check.threshold)} | {mark} |"
 
 
+def hosting_label(report: RunReport, model: str) -> str:
+    info = report.model_info.get(model)
+    if info is None:
+        return ""
+    kind = "open weights" if info.hosting == "open_weights" else "Meta Model API"
+    return f"{kind} ({info.served_by})" if info.served_by and info.hosting == "open_weights" else kind
+
+
 def to_markdown(report: RunReport, *, max_patterns: int = 6) -> str:
     out: list[str] = ["## Spark Gate", ""]
     out.append(
@@ -69,10 +77,13 @@ def to_markdown(report: RunReport, *, max_patterns: int = 6) -> str:
             "replay itself failed."
         )
     out.append("")
-    out.append("| Candidate | Verdict | Summary |")
-    out.append("|---|---|---|")
+    out.append("| Candidate | Served by | Verdict | Summary |")
+    out.append("|---|---|---|---|")
     for v in report.verdicts:
-        out.append(f"| {md(v.candidate_model)} | {_BADGE[v.decision]} | {md(v.summary, 400)} |")
+        out.append(f"| {md(v.candidate_model)} | {md(hosting_label(report, v.candidate_model))} | "
+                   f"{_BADGE[v.decision]} | {md(v.summary, 400)} |")
+    for model, reason in report.skipped_candidates.items():
+        out.append(f"| {md(model)} | - | skipped | {md(reason)} |")
 
     for v in report.verdicts:
         out += ["", f"### {md(v.candidate_model)} — {_BADGE[v.decision]}", ""]

@@ -29,6 +29,8 @@ jobs:
       - uses: ./
         env:
           MODEL_API_KEY: ${{ secrets.MODEL_API_KEY }}
+          BASETEN_API_KEY: ${{ secrets.BASETEN_API_KEY }}
+          FIREWORKS_API_KEY: ${{ secrets.FIREWORKS_API_KEY }}
           GLIMMER_BASE_URL: ${{ secrets.GLIMMER_BASE_URL }}
           GLIMMER_API_KEY: ${{ secrets.GLIMMER_API_KEY }}
         with:

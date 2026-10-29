@@ -2,10 +2,12 @@
 # environment variable that holds its key.
 
 baseline: muse-spark-1.1            # the version the agent runs on today
-candidates:                          # versions you are considering
-  - muse-spark-1.2
-  - muse-spark-1.3
-  - muse-glimmer-30b
+candidates:                          # versions you are considering; a candidate whose
+  - muse-spark-1.2                   # endpoint has no key set is skipped, not failed
+  - muse-spark-1.3                   # (pass --strict to fail instead)
+  - muse-spark-open                  # open weights on Baseten
+  - muse-spark-open-fireworks        # same open weights on Fireworks
+  - muse-glimmer-30b                 # open weights on your own endpoint (e.g. Modal)
 
 traces: traces/support_agent.jsonl
 
@@ -13,8 +15,14 @@ endpoints:
   meta:                              # Meta Model API (OpenAI-compatible)
     base_url: https://api.meta.ai/v1
     api_key_env: MODEL_API_KEY
-  glimmer:                           # any OpenAI-compatible host serving Muse Glimmer weights
-    base_url_env: GLIMMER_BASE_URL   # e.g. your Baseten / Fireworks / Modal / Together endpoint
+  baseten:                           # Baseten Model APIs (OpenAI-compatible)
+    base_url: https://inference.baseten.co/v1
+    api_key_env: BASETEN_API_KEY
+  fireworks:                         # Fireworks serverless (OpenAI-compatible)
+    base_url: https://api.fireworks.ai/inference/v1
+    api_key_env: FIREWORKS_API_KEY
+  glimmer:                           # any OpenAI-compatible server you run for Muse Glimmer
+    base_url_env: GLIMMER_BASE_URL   # e.g. a Modal endpoint
     api_key_env: GLIMMER_API_KEY
 
 models:
@@ -22,13 +30,28 @@ models:
   muse-spark-1.1: {endpoint: meta, input_per_mtok: 1.25, output_per_mtok: 4.25, cached_input_per_mtok: 0.15}
   muse-spark-1.2: {endpoint: meta, input_per_mtok: 1.25, output_per_mtok: 4.25, cached_input_per_mtok: 0.15}
   muse-spark-1.3: {endpoint: meta, input_per_mtok: 1.25, output_per_mtok: 4.25, cached_input_per_mtok: 0.15}
+  muse-spark-open:
+    endpoint: baseten
+    wire_model: meta-models/muse-spark-open-1026   # the hackathon id from the event guide
+    hosting: open_weights
+    served_by: Baseten
+    # Price not set: Baseten has not published one we could verify, so the cost check is
+    # skipped for this model rather than reporting a made-up number.
+  muse-spark-open-fireworks:
+    endpoint: fireworks
+    wire_model: accounts/fireworks/models/muse-spark-open
+    hosting: open_weights
+    served_by: Fireworks
+    input_per_mtok: 1.25             # Fireworks serverless list price
+    output_per_mtok: 4.25
+    cached_input_per_mtok: 0.15
   muse-glimmer-30b:
     endpoint: glimmer
-    wire_model: meta-models/Muse-Glimmer-30B   # the id your host expects; change to match it
-    # Set to your host's per-token rate. Leave unset for per-GPU-hour hosting: the cost
-    # check is then skipped for this model instead of reporting a made-up number.
-    input_per_mtok: 0.30
-    output_per_mtok: 1.20
+    wire_model: meta-models/Muse-Glimmer-30B   # the id your server expects; change to match it
+    hosting: open_weights
+    served_by: Modal
+    # Billed per GPU-hour on your own endpoint, so no per-token price: the cost check is
+    # skipped for this model. Set a per-token rate here if your host charges one.
 
 judge:                               # pairwise, position-swapped quality judge
   enabled: true

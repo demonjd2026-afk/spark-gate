@@ -63,3 +63,25 @@ def test_backend_enforces_refund_rules():
         "already_refunded"
     assert _run(b, "lookup_order", order_id=123)["error"] == "order_not_found"
     assert _run(b, "drop_tables")["error"] == "unknown_tool"
+
+
+def test_candidates_without_keys_are_skipped_not_fatal(monkeypatch):
+    raw = {
+        "baseline": "a", "candidates": ["b", "open"], "traces": "t.jsonl",
+        "endpoints": {"meta": {"base_url": "https://x/v1", "api_key_env": "SG_META"},
+                      "partner": {"base_url": "https://y/v1", "api_key_env": "SG_PARTNER"}},
+        "models": {"a": {"endpoint": "meta"}, "b": {"endpoint": "meta"},
+                   "open": {"endpoint": "partner", "hosting": "open_weights",
+                            "served_by": "Baseten"}},
+        "judge": {"model": "a"}, "fixer": {"model": "a"},
+    }
+    cfg = GateConfig.model_validate(raw)
+    monkeypatch.delenv("SG_PARTNER", raising=False)
+    monkeypatch.delenv("SG_META", raising=False)
+    with pytest.raises(ConfigError, match="required"):
+        cfg.split_available()  # the baseline itself has no key: never silently skipped
+    monkeypatch.setenv("SG_META", "k")
+    trimmed, skipped = cfg.split_available()
+    assert trimmed.candidates == ["b"] and skipped == {"open": "not set: SG_PARTNER"}
+    monkeypatch.setenv("SG_PARTNER", "k")
+    assert cfg.split_available() == (cfg, {})

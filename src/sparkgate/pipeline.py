@@ -18,6 +18,7 @@ from sparkgate.providers import ChatClient
 from sparkgate.schemas import (
     CandidateMetrics,
     GateDecision,
+    ModelInfo,
     NoiseFloor,
     RegressionPattern,
     ReplayResult,
@@ -243,6 +244,11 @@ class GatePipeline:
             inconclusive_trace_ids=inconclusive,
             noise_floor=noise,
             baseline_policy=audit_baseline(cfg.baseline, usable, baseline),
+            model_info={
+                m: ModelInfo(hosting=cfg.models[m].hosting, served_by=cfg.models[m].served_by,
+                             wire_model=cfg.models[m].wire_model or m)
+                for m in models
+            },
             replays=list(baseline.values()),
         )
         for o in outcomes:

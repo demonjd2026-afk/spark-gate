@@ -300,6 +300,12 @@ class PolicyAudit(BaseModel):
     failures: dict[str, list[str]] = Field(default_factory=dict)
 
 
+class ModelInfo(BaseModel):
+    hosting: Literal["meta_api", "open_weights"] = "meta_api"
+    served_by: str | None = None
+    wire_model: str | None = None
+
+
 class RunReport(BaseModel):
     run_id: str
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
@@ -307,6 +313,8 @@ class RunReport(BaseModel):
     candidate_models: list[str]
     n_traces: int
     inconclusive_trace_ids: list[str] = Field(default_factory=list)  # baseline replay failed
+    skipped_candidates: dict[str, str] = Field(default_factory=dict)  # model -> why not run
+    model_info: dict[str, ModelInfo] = Field(default_factory=dict)
     noise_floor: NoiseFloor | None = None
     baseline_policy: PolicyAudit | None = None
     metrics: list[CandidateMetrics] = Field(default_factory=list)

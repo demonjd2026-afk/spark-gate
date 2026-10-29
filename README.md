@@ -1,12 +1,29 @@
 # Spark Gate
 
 **A CI safety gate for model upgrades.** Spark Gate takes an agent's real traces,
-replays them on other Muse Spark versions (and Muse Glimmer), measures what actually
-changed, asks Muse Spark to diagnose and fix each regression, re-tests the fix, and
+replays them on other Muse Spark versions and on Meta's open-weight models (Muse Spark
+Open, Muse Glimmer), measures what actually changed, asks Muse Spark to diagnose and fix each regression, re-tests the fix, and
 returns a verdict: **ship**, **ship with fix**, or **don't ship**. A GitHub Action
 blocks the pull request when the answer is no.
 
 Built for the Meta Global AI Developer Hackathon (Indie track, *Push the Frontier*).
+All code in this repository was written during the hackathon's building period
+(Oct 26 – Nov 4, 2026); the commit history shows when each part landed.
+
+## Where Meta's models are used
+
+| Role | Model | Served by |
+|---|---|---|
+| Baseline: the version the agent runs on today | `muse-spark-1.1` | Meta Model API |
+| Upgrade candidates | `muse-spark-1.2`, `muse-spark-1.3` | Meta Model API |
+| Open-weight candidates (hosted → open migration) | Muse Spark Open, Muse Glimmer 30B | Baseten, Fireworks, or your own endpoint (e.g. Modal) |
+| Pairwise quality judge (position-swapped) | `muse-spark-1.3` | Meta Model API |
+| Regression diagnosis and prompt-fix proposals | `muse-spark-1.3` | Meta Model API |
+| The demo agent being tested | whichever model is under test | all of the above |
+
+The same 24 conversations run on every model, so the report answers two practical
+questions side by side: *is the next Muse Spark version safe?* and *can we move this
+agent from the hosted API to open weights without breaking it?*
 
 ---
 
@@ -122,11 +139,19 @@ Everything lives in [`sparkgate.yaml`](sparkgate.yaml): baseline, candidates, en
 per-model pricing, judge/fixer models, gate thresholds and runtime limits (concurrency,
 retries, timeouts, a hard **budget ceiling** per run).
 
-**Muse Glimmer** is an open-weights model and is not served by the Meta Model API.
-Point the `glimmer` endpoint at any OpenAI-compatible host serving
-`meta-models/Muse-Glimmer-30B` (for example the hackathon's inference partners) with
-`GLIMMER_BASE_URL` / `GLIMMER_API_KEY`, set `wire_model` to the id that host expects,
-and set its price, or leave the price unset to skip the cost check for it.
+**Open-weight models** are not served by the Meta Model API. The config ships ready for
+three hosts; set the key for whichever you have and the rest are skipped (and listed as
+skipped in the report). `sparkgate validate` shows which models are ready.
+
+| Model key | Host | Model id sent | Keys |
+|---|---|---|---|
+| `muse-spark-open` | Baseten Model APIs | `meta-models/muse-spark-open-1026` | `BASETEN_API_KEY` |
+| `muse-spark-open-fireworks` | Fireworks serverless | `accounts/fireworks/models/muse-spark-open` | `FIREWORKS_API_KEY` |
+| `muse-glimmer-30b` | any OpenAI-compatible server you run (e.g. Modal) | `meta-models/Muse-Glimmer-30B` (change to match your server) | `GLIMMER_BASE_URL`, `GLIMMER_API_KEY` |
+
+Prices are set only where the host publishes a per-token rate; otherwise the cost
+check is skipped for that model instead of reporting a guessed number. Pass `--strict`
+to fail when a configured candidate has no key.
 
 If an endpoint rejects a request parameter, adjust `runtime`:
 `temperature: null` omits temperature; `max_tokens_param: max_completion_tokens`
