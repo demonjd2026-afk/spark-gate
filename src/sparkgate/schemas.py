@@ -59,6 +59,47 @@ class ToolCall(BaseModel):
     matched: Literal["exact", "fuzzy", "none", "live"] = "live"
 
 
+class ArgRule(BaseModel):
+    """Constraint on one tool argument, applied to every call of that tool."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    min: float | None = None
+    max: float | None = None
+    one_of: list[Any] | None = None
+
+
+class Expectations(BaseModel):
+    """What a correct run must (not) do on this trace, independent of any model.
+
+    The gate otherwise only compares a candidate with the baseline, so a mistake the
+    baseline already makes would never be flagged. Expectations are absolute: they are
+    checked on the baseline and on every candidate.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    must_call: list[str] = Field(default_factory=list)
+    must_not_call: list[str] = Field(default_factory=list)
+    # (a, b): every call to b must come after at least one call to a.
+    call_before: list[tuple[str, str]] = Field(default_factory=list)
+    # "tool.arg" -> rule, e.g. {"issue_refund.amount": {"max": 189}}
+    args: dict[str, ArgRule] = Field(default_factory=dict)
+    # dotted path in the final JSON answer -> allowed values, e.g. {"action": ["declined"]}
+    answer: dict[str, list[Any]] = Field(default_factory=dict)
+    # case-insensitive substrings that must not appear anywhere in the final answer
+    answer_must_not_contain: list[str] = Field(default_factory=list)
+    max_tool_calls: int | None = Field(default=None, ge=0)
+
+    @field_validator("args")
+    @classmethod
+    def _arg_keys(cls, v: dict[str, ArgRule]) -> dict[str, ArgRule]:
+        for key in v:
+            if key.count(".") != 1 or not all(key.split(".")):
+                raise ValueError(f"argument rule key must look like 'tool.arg': {key!r}")
+        return v
+
+
 class Trace(BaseModel):
     """A single recorded agent run."""
 
@@ -71,6 +112,7 @@ class Trace(BaseModel):
     tool_calls: list[ToolCall] = Field(default_factory=list)
     final_text: str = Field(default="", max_length=_MAX_TEXT)
     output_schema: dict[str, Any] | None = None
+    expectations: Expectations | None = None
     tags: list[str] = Field(default_factory=list)
     recorded_model: str | None = None
 
@@ -152,7 +194,12 @@ class TraceDiff(BaseModel):
     missing_tools: list[str] = Field(default_factory=list)
     extra_tools: list[str] = Field(default_factory=list)
     arg_changes: list[str] = Field(default_factory=list)
+    changed_side_effect_tools: list[str] = Field(default_factory=list)
     unrecorded_calls: int = 0  # candidate calls the recording could not serve
+
+    # None = the trace carries no expectations
+    baseline_policy_violations: list[str] | None = None
+    candidate_policy_violations: list[str] | None = None
 
     schema_required: bool = False
     baseline_schema_valid: bool | None = None
@@ -161,6 +208,7 @@ class TraceDiff(BaseModel):
 
     quality: QualityVerdict = QualityVerdict.NOT_JUDGED
     quality_reason: str = ""
+    judge_orders_agreed: bool | None = None  # None = judge not asked
 
     baseline_latency_ms: float = 0.0
     candidate_latency_ms: float = 0.0
@@ -202,12 +250,14 @@ class CandidateMetrics(BaseModel):
     tool_fidelity_rate: float = 0.0  # share of traces without a sequence change
     tool_exact_rate: float = 0.0
     schema_valid_rate: float | None = None
+    policy_pass_rate: float | None = None
     quality_win_rate: float = 0.0
     quality_loss_rate: float = 0.0
     latency_p50_ratio: float = 1.0
     latency_p95_ratio: float = 1.0
     cost_ratio: float = 1.0
     regressions: int = 0
+    judge_agreement_rate: float | None = None  # both orderings agreed, among judged pairs
 
 
 class GateDecision(StrEnum):
@@ -241,6 +291,15 @@ class NoiseFloor(BaseModel):
     tool_sequence_drift_rate: float
 
 
+class PolicyAudit(BaseModel):
+    """Expectation results for the baseline itself: what production already gets wrong."""
+
+    model: str
+    traces_checked: int
+    pass_rate: float | None
+    failures: dict[str, list[str]] = Field(default_factory=dict)
+
+
 class RunReport(BaseModel):
     run_id: str
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
@@ -249,9 +308,52 @@ class RunReport(BaseModel):
     n_traces: int
     inconclusive_trace_ids: list[str] = Field(default_factory=list)  # baseline replay failed
     noise_floor: NoiseFloor | None = None
+    baseline_policy: PolicyAudit | None = None
     metrics: list[CandidateMetrics] = Field(default_factory=list)
     diffs: list[TraceDiff] = Field(default_factory=list)
     replays: list[ReplayResult] = Field(default_factory=list)
     patterns: list[RegressionPattern] = Field(default_factory=list)
     verdicts: list[Verdict] = Field(default_factory=list)
     total_cost_usd: float = 0.0
+
+
+# --------------------------------------------------------------------------- #
+# Calibration: how reliable is the gate itself?
+# --------------------------------------------------------------------------- #
+
+
+class OperatorStats(BaseModel):
+    operator: str
+    description: str
+    should_catch: bool  # design intent: do the deterministic checks claim to catch this?
+    mutants: int = 0
+    caught: int = 0
+    caught_by: dict[str, int] = Field(default_factory=dict)  # check layer -> count
+    missed_trace_ids: list[str] = Field(default_factory=list)
+
+    @property
+    def rate(self) -> float | None:
+        return self.caught / self.mutants if self.mutants else None
+
+
+class JudgeCalibration(BaseModel):
+    model: str
+    degraded_pairs: int = 0
+    degraded_caught: int = 0      # judge preferred the real answer (both orderings)
+    degraded_inverted: int = 0    # judge preferred the wrong answer (both orderings)
+    control_pairs: int = 0
+    control_ties: int = 0         # equivalent answers scored as a tie
+    asked_pairs: int = 0
+    orders_agreed: int = 0
+    not_judged: int = 0
+    cost_usd: float = 0.0
+
+
+class CalibrationReport(BaseModel):
+    calibration_id: str
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    n_traces: int
+    operators: list[OperatorStats] = Field(default_factory=list)
+    detection_rate: float | None = None       # over operators the checks claim to catch
+    false_positive_rate: float | None = None  # unchanged runs flagged as regressions
+    judge: JudgeCalibration | None = None

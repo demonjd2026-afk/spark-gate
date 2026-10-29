@@ -17,10 +17,12 @@ from rich.console import Console
 from rich.progress import BarColumn, MofNCompleteColumn, Progress, TextColumn, TimeElapsedColumn
 from rich.table import Table
 
+from sparkgate.calibrate import calibrate_judge, run_mutations
 from sparkgate.config import ConfigError, GateConfig, load_config
+from sparkgate.judge import PairwiseJudge
 from sparkgate.pipeline import GatePipeline
 from sparkgate.providers import ModelRouter
-from sparkgate.report import to_markdown
+from sparkgate.report import calibration_markdown, to_markdown
 from sparkgate.schemas import GateDecision, RunReport
 from sparkgate.store import RunStore
 from sparkgate.traces import TraceFileError, load_traces
@@ -67,7 +69,8 @@ async def _execute(cfg: GateConfig, traces) -> RunReport:
 
 def _verdict_table(report: RunReport) -> Table:
     table = Table(title=f"Spark Gate · baseline {report.baseline_model}")
-    for col in ("candidate", "verdict", "fidelity", "schema", "quality loss", "p95 lat", "cost"):
+    for col in ("candidate", "verdict", "policy", "fidelity", "schema", "quality loss", "p95 lat",
+                "cost"):
         table.add_column(col)
     style = {"ship": "green", "ship_with_fix": "yellow", "dont_ship": "red"}
     originals = {m.model: m for m in report.metrics if m.variant == "original"}
@@ -76,6 +79,7 @@ def _verdict_table(report: RunReport) -> Table:
         table.add_row(
             v.candidate_model,
             f"[{style[v.decision.value]}]{v.decision.value}[/]",
+            "-" if m.policy_pass_rate is None else f"{m.policy_pass_rate:.0%}",
             f"{m.tool_fidelity_rate:.0%}",
             "-" if m.schema_valid_rate is None else f"{m.schema_valid_rate:.0%}",
             f"{m.quality_loss_rate:.0%}",
@@ -134,6 +138,70 @@ def run(
 
 
 @app.command()
+def calibrate(
+    config: ConfigOpt = Path("sparkgate.yaml"),
+    judge: Annotated[
+        bool, typer.Option("--judge", help="Also audit the judge model (makes API calls)")
+    ] = False,
+    max_judge_pairs: Annotated[int, typer.Option(min=2, max=500)] = 24,
+    markdown: Annotated[Path | None, typer.Option("--markdown")] = None,
+    fail_under: Annotated[
+        float, typer.Option(min=0, max=1, help="Exit 1 if the seeded-fault detection rate is lower")
+    ] = 0.0,
+) -> None:
+    """Measure the gate itself: seed known faults into recorded runs and count what it catches."""
+    cfg = _load(config, None)
+    try:
+        traces = load_traces(cfg.traces)
+    except TraceFileError as exc:
+        console.print(f"[red]trace error:[/] {exc}")
+        raise typer.Exit(2) from exc
+
+    cal = run_mutations(traces, cfg.gate.side_effect_tools)
+    if judge:
+        if not cfg.judge.enabled:
+            console.print("[red]judge is disabled in the config[/]")
+            raise typer.Exit(2)
+
+        async def audit():
+            router = ModelRouter(cfg, models={cfg.judge.model})
+            try:
+                return await calibrate_judge(
+                    PairwiseJudge(router, cfg.judge.model), cfg.judge.model, traces,
+                    max_judge_pairs,
+                )
+            finally:
+                await router.aclose()
+
+        try:
+            cal.judge = asyncio.run(audit())
+        except ConfigError as exc:
+            console.print(f"[red]config error:[/] {exc}")
+            raise typer.Exit(2) from exc
+
+    path = RunStore(cfg.store_dir).save_calibration(cal)
+    table = Table(title="Spark Gate calibration")
+    for col in ("fault", "claimed", "mutants", "caught", "caught by"):
+        table.add_column(col)
+    for op in cal.operators:
+        table.add_row(op.description, "yes" if op.should_catch else "no", str(op.mutants),
+                      "-" if op.rate is None else f"{op.rate:.0%}",
+                      ", ".join(f"{k} {v}" for k, v in sorted(op.caught_by.items())))
+    console.print(table)
+    if cal.detection_rate is not None:
+        console.print(f"detection {cal.detection_rate:.0%} · false positives "
+                      f"{(cal.false_positive_rate or 0):.0%} · report: {path}")
+    text = calibration_markdown(cal)
+    if markdown:
+        markdown.write_text(text, encoding="utf-8")
+    if summary := os.environ.get("GITHUB_STEP_SUMMARY"):
+        with open(summary, "a", encoding="utf-8") as fh:
+            fh.write(text)
+    rate = cal.detection_rate if cal.detection_rate is not None else 0.0
+    raise typer.Exit(1 if rate < fail_under else 0)
+
+
+@app.command()
 def validate(config: ConfigOpt = Path("sparkgate.yaml")) -> None:
     """Check the config and trace file without calling any model."""
     cfg = _load(config, None)
@@ -143,10 +211,12 @@ def validate(config: ConfigOpt = Path("sparkgate.yaml")) -> None:
         console.print(f"[red]trace error:[/] {exc}")
         raise typer.Exit(2) from exc
     with_schema = sum(t.output_schema is not None for t in traces)
+    with_rules = sum(t.expectations is not None for t in traces)
     calls = sum(len(t.tool_calls) for t in traces)
     console.print(
         f"[green]ok[/] · {len(traces)} traces · {calls} recorded tool calls · "
-        f"{with_schema} with an output schema · baseline {cfg.baseline} · "
+        f"{with_schema} with an output schema · {with_rules} with policy expectations · "
+        f"baseline {cfg.baseline} · "
         f"candidates {', '.join(cfg.candidates)}"
     )
     missing = []

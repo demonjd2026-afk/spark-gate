@@ -82,6 +82,7 @@ class Judgement:
     verdict: QualityVerdict
     reason: str
     cost_usd: float = 0.0
+    orders_agreed: bool | None = None  # None when the judge was not (successfully) asked
 
 
 class PairwiseJudge:
@@ -132,12 +133,16 @@ class PairwiseJudge:
 
         fwd_pick = {"A": "baseline", "B": "candidate", "tie": "tie"}[fwd.winner]
         rev_pick = {"A": "candidate", "B": "baseline", "tie": "tie"}[rev.winner]
-        if fwd_pick == rev_pick == "baseline":
-            return Judgement(QualityVerdict.BASELINE_BETTER, fwd.reason, cost)
-        if fwd_pick == rev_pick == "candidate":
-            return Judgement(QualityVerdict.CANDIDATE_BETTER, fwd.reason, cost)
-        if fwd_pick == rev_pick == "tie":
-            return Judgement(QualityVerdict.TIE, fwd.reason, cost)
+        if fwd_pick == rev_pick:
+            verdict = {
+                "baseline": QualityVerdict.BASELINE_BETTER,
+                "candidate": QualityVerdict.CANDIDATE_BETTER,
+                "tie": QualityVerdict.TIE,
+            }[fwd_pick]
+            return Judgement(verdict, fwd.reason, cost, orders_agreed=True)
         return Judgement(
-            QualityVerdict.TIE, f"orderings disagreed ({fwd_pick} vs {rev_pick}); scored as tie", cost
+            QualityVerdict.TIE,
+            f"orderings disagreed ({fwd_pick} vs {rev_pick}); scored as tie",
+            cost,
+            orders_agreed=False,
         )

@@ -47,6 +47,8 @@ flowchart LR
 | **Diff** (`diff.py`) | Tool sequence (multiset missing/extra, reorder), changed arguments, JSON Schema validity of the final answer, latency, cost. | Pure functions, no model calls: the parts that can be measured exactly are. |
 | **Judge** (`judge.py`) | Muse Spark compares baseline vs candidate twice, in both orders. A winner counts only if both orders agree; otherwise it is a tie. | Removes position bias. Responses are fenced as untrusted data; judge output must parse into a fixed shape. |
 | **Gate** (`gate.py`) | Tool fidelity, schema validity, quality-loss rate, p95 latency ratio, cost ratio, run errors, each against thresholds in `sparkgate.yaml`. | A check with no data (unpriced model, judge disabled) is reported as *skipped*, never filled with a made-up number. |
+| **Policy expectations** (`policy.py`) | Optional per-trace rules: tools that must / must not be called, call order, argument bounds (e.g. refund ≤ the item price), allowed values in the final answer, and text that must never be revealed. Checked on the baseline *and* every candidate. | Comparing against the baseline alone can't catch a mistake the baseline already makes. A rule the baseline also breaks isn't counted as a regression, but the absolute check still blocks the ship, and the report lists what production already gets wrong. |
+| **Side-effect arguments** (`diff.py`) | Tools listed under `gate.side_effect_tools` (refunds, tickets) are compared argument by argument, ignoring free-text fields such as `reason`. | A changed search query is harmless; a changed refund amount isn't. |
 | **Diagnose & fix** (`fixer.py`) | Regressions are grouped deterministically by primary code (e.g. `dropped_tool:check_refund_eligibility`). Muse Spark explains each group and proposes a short system-prompt addendum. | The model never decides which traces belong together; it only explains a group it is given. |
 | **Verify** (`pipeline.py`) | Each fix is replayed on the traces it targets; accepted fixes are then applied *together* and the whole suite is re-run and re-gated. | A fix that repairs one pattern but breaks other traces cannot let a model through. |
 
@@ -66,7 +68,10 @@ sparkgate validate
 # 3. Run the gate (exit code 0 = pass, 1 = fail, 2 = config/input error)
 sparkgate run --markdown report.md
 
-# 4. Explore the result
+# 4. Measure the gate itself (offline; add --judge to audit the judge model)
+sparkgate calibrate
+
+# 5. Explore the result
 streamlit run app/dashboard.py
 ```
 
@@ -78,12 +83,38 @@ Other commands: `sparkgate report latest`, `sparkgate history`,
 
 `demo/support_agent/` is a tool-calling support agent for a fictional outdoor-gear
 store, with five tools (`lookup_order`, `check_refund_eligibility`, `issue_refund`,
-`create_ticket`, `search_help_center`), a written refund policy, and a strict JSON
-output schema. The backend enforces its own rules (30-day window, final sale, $200
+`create_ticket`, `search_help_center`), a written refund policy, a strict JSON
+output schema, and policy expectations for every scenario. The backend enforces its own rules (30-day window, final sale, $200
 specialist limit, identity match), and its clock is frozen so recordings are
 reproducible. The 24 scenarios include straightforward refunds, policy edge cases,
 identity mismatches and two prompt-injection attempts, which is where model upgrades
 tend to regress.
+
+## Can you trust the gate? (`sparkgate calibrate`)
+
+A gate is only useful if it catches what it claims to and stays quiet otherwise.
+`sparkgate calibrate` measures that on your own traces, offline and free:
+
+1. Each recorded run is copied and one known fault is seeded into the copy: a skipped
+   tool call, two calls swapped, a side-effecting call repeated or given a different
+   argument, a broken JSON answer, a wrong outcome in the answer, a forbidden tool
+   called. A fault is only seeded where it isn't already present.
+2. The copy goes through exactly the same diff and policy checks a real candidate gets.
+3. The report gives the detection rate per fault type, which check caught it, and the
+   **false-positive rate** on unchanged copies (which must be 0%).
+
+It also reports one known blind spot instead of hiding it: a changed argument on a
+read-only tool (e.g. looking up the wrong order) isn't flagged by the deterministic
+checks, only by the judge.
+
+`sparkgate calibrate --judge` also audits the judge model (a few cents of API calls).
+For each trace it pairs the real answer with another customer's answer (a sound judge
+prefers the real one in both orderings) and with a re-serialised copy of itself (a
+sound judge calls it a tie), and reports how often the two orderings agreed.
+
+The demo's expectations are themselves tested (`tests/test_demo_spec.py`). A rule-based
+agent that follows the written policy satisfies every expectation against the real
+backend, and an agent that refunds without the eligibility check fails them.
 
 ## Configuration
 
@@ -147,7 +178,9 @@ src/sparkgate/
   config.py     sparkgate.yaml + environment secrets
   providers.py  async model router: endpoints, concurrency, retries, cost, budget
   engine.py     agent loop + recorded-tool oracle
-  diff.py       behavioral diff, JSON extraction, schema validation, regression codes
+  diff.py       behavioral diff, schema validation, regression codes
+  policy.py     per-trace policy expectations
+  calibrate.py  seeded-fault calibration of the gate + judge audit
   judge.py      position-swapped pairwise judge
   fixer.py      deterministic pattern grouping + Muse Spark diagnosis/fix
   gate.py       metrics, thresholds, decision
@@ -179,6 +212,8 @@ cached-token pricing and budget ceiling through the real OpenAI SDK.
 - The quality judge is itself a model. Position swapping removes order bias but not
   every bias; the deterministic checks (tools, schema, cost, latency) carry the gate.
 - Prompt fixes are suggestions verified by replay, not guarantees on unseen traffic.
+- Calibration measures the checks against the fault types it seeds; a fault type it
+  doesn't model isn't covered by its numbers.
 
 ## License
 

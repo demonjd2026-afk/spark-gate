@@ -12,7 +12,7 @@ from sparkgate.config import GateConfig
 from sparkgate.diff import diff_replays, regression_codes, sequence_drifted
 from sparkgate.engine import replay_trace
 from sparkgate.fixer import PromptFixer, combined_addendum, group_patterns
-from sparkgate.gate import compute_metrics, decide, evaluate
+from sparkgate.gate import audit_baseline, compute_metrics, decide, evaluate
 from sparkgate.judge import PairwiseJudge
 from sparkgate.providers import ChatClient
 from sparkgate.schemas import (
@@ -103,10 +103,11 @@ class GatePipeline:
     ) -> list[TraceDiff]:
         async def one(t: Trace) -> TraceDiff:
             b, c = baseline[t.id], candidate[t.id]
-            d = diff_replays(t, b, c)
+            d = diff_replays(t, b, c, self.cfg.gate.side_effect_tools)
             if self.judge and c.status is ReplayStatus.OK:
                 j = await self.judge.compare(t, b, c)
                 d.quality, d.quality_reason = j.verdict, j.reason
+                d.judge_orders_agreed = j.orders_agreed
                 d.regression_codes = regression_codes(d)
             return d
 
@@ -241,6 +242,7 @@ class GatePipeline:
             n_traces=len(traces),
             inconclusive_trace_ids=inconclusive,
             noise_floor=noise,
+            baseline_policy=audit_baseline(cfg.baseline, usable, baseline),
             replays=list(baseline.values()),
         )
         for o in outcomes:

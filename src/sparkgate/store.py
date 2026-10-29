@@ -12,7 +12,7 @@ from pathlib import Path
 
 import duckdb
 
-from sparkgate.schemas import RunReport
+from sparkgate.schemas import CalibrationReport, RunReport
 
 _DDL = (
     """
@@ -121,3 +121,17 @@ class RunStore:
         if not path.is_file():
             raise FileNotFoundError(f"no report for run {run_id!r} in {self.reports_dir}")
         return RunReport.model_validate(json.loads(path.read_text(encoding="utf-8")))
+
+    # Calibration reports live next to run reports, prefixed so they never mix.
+    def save_calibration(self, report: CalibrationReport) -> Path:
+        payload = report.model_dump_json()
+        path = self.reports_dir / f"calibration-{report.calibration_id}.json"
+        path.write_text(payload, encoding="utf-8")
+        (self.reports_dir / "calibration-latest.json").write_text(payload, encoding="utf-8")
+        return path
+
+    def load_calibration(self) -> CalibrationReport:
+        path = self.reports_dir / "calibration-latest.json"
+        if not path.is_file():
+            raise FileNotFoundError(f"no calibration report in {self.reports_dir}")
+        return CalibrationReport.model_validate_json(path.read_text(encoding="utf-8"))

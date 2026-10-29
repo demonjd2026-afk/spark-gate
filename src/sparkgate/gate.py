@@ -6,16 +6,23 @@ import math
 from collections.abc import Sequence
 
 from sparkgate.config import GateThresholds
+from sparkgate.policy import violations
 from sparkgate.schemas import (
     CandidateMetrics,
     GateDecision,
+    PolicyAudit,
     QualityVerdict,
     ReplayResult,
     ReplayStatus,
     ThresholdCheck,
     ToolFidelity,
+    Trace,
     TraceDiff,
     Verdict,
+)
+
+PERCENT_CHECKS = frozenset(
+    {"tool-call fidelity", "schema validity", "quality loss rate", "policy pass rate"}
 )
 
 
@@ -49,6 +56,8 @@ def compute_metrics(
         return CandidateMetrics(model=model, variant=variant)
     ok = [d for d in diffs if d.candidate_status is ReplayStatus.OK]
     schema_diffs = [d for d in diffs if d.schema_required]
+    policy_diffs = [d for d in diffs if d.candidate_policy_violations is not None]
+    asked = [d for d in diffs if d.judge_orders_agreed is not None]
 
     b_lat = [r.latency_ms for r in baseline_replays if r.status is ReplayStatus.OK]
     c_lat = [r.latency_ms for r in candidate_replays if r.status is ReplayStatus.OK]
@@ -66,6 +75,14 @@ def compute_metrics(
             sum(bool(d.candidate_schema_valid) for d in schema_diffs) / len(schema_diffs)
             if schema_diffs
             else None
+        ),
+        policy_pass_rate=(
+            sum(not d.candidate_policy_violations for d in policy_diffs) / len(policy_diffs)
+            if policy_diffs
+            else None
+        ),
+        judge_agreement_rate=(
+            sum(bool(d.judge_orders_agreed) for d in asked) / len(asked) if asked else None
         ),
         quality_win_rate=sum(d.quality is QualityVerdict.CANDIDATE_BETTER for d in diffs) / n,
         quality_loss_rate=sum(d.quality is QualityVerdict.BASELINE_BETTER for d in diffs) / n,
@@ -95,6 +112,7 @@ def evaluate(
     checks = [
         check("run errors", "max", float(t.max_errors), float(m.errors)),
         check("tool-call fidelity", "min", t.min_tool_fidelity, m.tool_fidelity_rate),
+        check("policy pass rate", "min", t.min_policy_pass, m.policy_pass_rate),
         check("schema validity", "min", t.min_schema_valid, m.schema_valid_rate),
         check("quality loss rate", "max", t.max_quality_loss,
               m.quality_loss_rate if judged else None),
@@ -139,4 +157,23 @@ def decide(
         patched_checks=patched_checks or [],
         prompt_addendum=addendum,
         summary=f"Failed: {', '.join(failed)}.{tail}",
+    )
+
+
+def audit_baseline(model: str, traces: list[Trace], replays: dict[str, ReplayResult]) -> PolicyAudit:
+    """Expectations checked on the baseline's own fresh replays."""
+    failures: dict[str, list[str]] = {}
+    checked = 0
+    for t in traces:
+        v = violations(t.expectations, replays[t.id])
+        if v is None:
+            continue
+        checked += 1
+        if v:
+            failures[t.id] = v
+    return PolicyAudit(
+        model=model,
+        traces_checked=checked,
+        pass_rate=(checked - len(failures)) / checked if checked else None,
+        failures=failures,
     )

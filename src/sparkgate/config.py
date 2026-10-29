@@ -88,10 +88,15 @@ class GateThresholds(BaseModel):
 
     min_tool_fidelity: float = Field(default=0.90, ge=0, le=1)
     min_schema_valid: float = Field(default=0.95, ge=0, le=1)
+    # Share of traces whose expectations (absolute policy rules) all hold.
+    min_policy_pass: float = Field(default=1.0, ge=0, le=1)
     max_quality_loss: float = Field(default=0.10, ge=0, le=1)
     max_latency_p95_ratio: float | None = Field(default=1.5, gt=0)
     max_cost_ratio: float | None = Field(default=1.5, gt=0)
     max_errors: int = Field(default=0, ge=0)
+    # Tools that change the world. A changed argument on these is a regression;
+    # the listed argument names (free text such as a reason) are ignored.
+    side_effect_tools: dict[str, list[str]] = Field(default_factory=dict)
 
 
 class RuntimeConfig(BaseModel):

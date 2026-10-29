@@ -64,19 +64,28 @@ def _calls(*names_args):
 def test_tool_diff_exact_and_args_changed():
     b = _calls(("lookup", {"id": "1"}), ("refund", {"amount": 10, "id": "1"}))
     c_same = _calls(("lookup", {"id": "1"}), ("refund", {"id": "1", "amount": 10}))
-    assert tool_diff(b, c_same)[0] is ToolFidelity.EXACT
+    assert tool_diff(b, c_same).fidelity is ToolFidelity.EXACT
     c_args = _calls(("lookup", {"id": "1"}), ("refund", {"amount": 99, "id": "1"}))
-    fid, _, _, changes = tool_diff(b, c_args)
-    assert fid is ToolFidelity.ARGS_CHANGED
-    assert "amount: 10 -> 99" in changes[0]
+    td = tool_diff(b, c_args)
+    assert td.fidelity is ToolFidelity.ARGS_CHANGED
+    assert "amount: 10 -> 99" in td.arg_changes[0]
+    assert td.side_effect_changes == []  # no side-effect tools configured
+    assert tool_diff(b, c_args, {"refund": []}).side_effect_changes == ["refund"]
 
 
 def test_tool_diff_multiset_missing_extra():
     b = _calls(("lookup", {}), ("check", {}), ("refund", {}))
     c = _calls(("lookup", {}), ("refund", {}), ("search", {}))
-    fid, missing, extra, _ = tool_diff(b, c)
-    assert fid is ToolFidelity.SEQUENCE_CHANGED
-    assert missing == ["check"] and extra == ["search"]
+    td = tool_diff(b, c)
+    assert td.fidelity is ToolFidelity.SEQUENCE_CHANGED
+    assert td.missing == ["check"] and td.extra == ["search"]
+
+
+def test_free_text_args_on_side_effect_tools_are_ignored():
+    b = _calls(("refund", {"amount": 10, "reason": "too small"}))
+    c = _calls(("refund", {"amount": 10, "reason": "customer changed plans"}))
+    td = tool_diff(b, c, {"refund": ["reason"]})
+    assert td.fidelity is ToolFidelity.ARGS_CHANGED and td.side_effect_changes == []
 
 
 def _trace(schema=SCHEMA):

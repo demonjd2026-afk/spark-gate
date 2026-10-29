@@ -49,7 +49,8 @@ async def record(config_path: Path, model: str, out: Path) -> int:
         return Trace(
             id=s["id"], system=SYSTEM_PROMPT, user=s["user"], tools=TOOLS,
             tool_calls=result.calls, final_text=result.final_text,
-            output_schema=OUTPUT_SCHEMA, tags=s.get("tags", []), recorded_model=model,
+            output_schema=OUTPUT_SCHEMA, expectations=s.get("expectations"),
+            tags=s.get("tags", []), recorded_model=model,
         )
 
     try:

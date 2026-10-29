@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 from sparkgate.diff import extract_json, primary_code
 from sparkgate.judge import fence, render_run
+from sparkgate.policy import describe
 from sparkgate.providers import BudgetExceeded, ChatClient
 from sparkgate.schemas import RegressionPattern, ReplayResult, Trace, TraceDiff
 
@@ -57,8 +58,10 @@ def _default_title(code: str) -> str:
     kind, _, arg = code.partition(":")
     return {
         "schema_invalid": "Final answer no longer matches the output schema",
-        "dropped_tool": f"Stops calling `{arg}`",
-        "extra_tool": f"Makes an extra `{arg}` call",
+        "policy": describe(arg),
+        "args_changed": f"Changes what {arg} does",
+        "dropped_tool": f"Stops calling {arg}",
+        "extra_tool": f"Makes an extra {arg} call",
         "reordered_tools": "Calls tools in a different order",
         "quality_worse": "Answers judged worse than the baseline",
         "error": f"Run failed ({arg})",
@@ -114,6 +117,8 @@ class PromptFixer:
         for tid in ids:
             d = diffs[tid]
             notes = []
+            if d.candidate_policy_violations:
+                notes.append("policy rules broken: " + ", ".join(d.candidate_policy_violations))
             if d.schema_errors:
                 notes.append("schema errors: " + "; ".join(d.schema_errors))
             if d.quality_reason:

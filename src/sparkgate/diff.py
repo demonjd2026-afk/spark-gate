@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import json
 from collections import Counter
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any
 
@@ -16,6 +18,8 @@ from jsonschema.exceptions import SchemaError
 from referencing import Registry
 from referencing.exceptions import Unresolvable
 
+from sparkgate.jsontext import extract_json
+from sparkgate.policy import violations
 from sparkgate.schemas import (
     QualityVerdict,
     ReplayResult,
@@ -27,42 +31,9 @@ from sparkgate.schemas import (
     canonical_args,
 )
 
-_DECODER = json.JSONDecoder()
-
-
 # --------------------------------------------------------------------------- #
 # Structured output
 # --------------------------------------------------------------------------- #
-
-
-def extract_json(text: str) -> Any | None:
-    """The JSON value a model meant to return, tolerating fences and surrounding prose.
-
-    Tries, in order: the whole string; the first ```json fenced block; the first
-    position where a JSON object or array decodes cleanly.
-    """
-    s = text.strip()
-    if not s:
-        return None
-    try:
-        return json.loads(s)
-    except json.JSONDecodeError:
-        pass
-    if "```" in s:
-        for block in s.split("```")[1::2]:
-            body = block.split("\n", 1)[1] if block.lower().startswith("json") else block
-            try:
-                return json.loads(body.strip())
-            except (json.JSONDecodeError, IndexError):
-                continue
-    for i, ch in enumerate(s):
-        if ch in "{[":
-            try:
-                value, _ = _DECODER.raw_decode(s, i)
-                return value
-            except json.JSONDecodeError:
-                continue
-    return None
 
 
 @lru_cache(maxsize=64)
@@ -109,23 +80,53 @@ def _describe_arg_change(name: str, a: dict[str, Any], b: dict[str, Any]) -> str
     return f"{name}({'; '.join(changed[:4])})"
 
 
+SideEffectTools = Mapping[str, Sequence[str]]  # tool -> argument names to ignore
+
+
+@dataclass(frozen=True, slots=True)
+class ToolDiff:
+    fidelity: ToolFidelity
+    missing: list[str]
+    extra: list[str]
+    arg_changes: list[str]
+    side_effect_changes: list[str]  # side-effecting tools whose material args changed
+
+
+def _material(args: dict[str, Any], ignore: Sequence[str]) -> str:
+    return canonical_args({k: v for k, v in args.items() if k not in ignore})
+
+
 def tool_diff(
-    baseline: list[ToolCall], candidate: list[ToolCall]
-) -> tuple[ToolFidelity, list[str], list[str], list[str]]:
-    """Returns (fidelity, missing_tools, extra_tools, arg_change_descriptions)."""
+    baseline: list[ToolCall],
+    candidate: list[ToolCall],
+    side_effect_tools: SideEffectTools | None = None,
+) -> ToolDiff:
+    """Compare two tool-call sequences.
+
+    Argument changes on read-only tools are reported but not treated as regressions:
+    a model may reasonably phrase a search differently. On side-effecting tools
+    (refunds, tickets, writes) a changed argument changes what happens in the world,
+    so it is surfaced separately, ignoring free-text arguments listed in the config.
+    """
+    side = side_effect_tools or {}
     b_names = [c.name for c in baseline]
     c_names = [c.name for c in candidate]
     if b_names == c_names:
-        changes = [
-            _describe_arg_change(b.name, b.arguments, c.arguments)
-            for b, c in zip(baseline, candidate, strict=True)
-            if canonical_args(b.arguments) != canonical_args(c.arguments)
-        ]
-        return (ToolFidelity.ARGS_CHANGED if changes else ToolFidelity.EXACT), [], [], changes
+        changes, side_changes = [], []
+        for b, c in zip(baseline, candidate, strict=True):
+            if canonical_args(b.arguments) == canonical_args(c.arguments):
+                continue
+            changes.append(_describe_arg_change(b.name, b.arguments, c.arguments))
+            if b.name in side and _material(b.arguments, side[b.name]) != _material(
+                c.arguments, side[b.name]
+            ):
+                side_changes.append(b.name)
+        fidelity = ToolFidelity.ARGS_CHANGED if changes else ToolFidelity.EXACT
+        return ToolDiff(fidelity, [], [], changes, list(dict.fromkeys(side_changes)))
     b_count, c_count = Counter(b_names), Counter(c_names)
     missing = sorted((b_count - c_count).elements())
     extra = sorted((c_count - b_count).elements())
-    return ToolFidelity.SEQUENCE_CHANGED, missing, extra, []
+    return ToolDiff(ToolFidelity.SEQUENCE_CHANGED, missing, extra, [], [])
 
 
 def sequence_drifted(recorded: list[ToolCall], replayed: list[ToolCall]) -> bool:
@@ -137,8 +138,8 @@ def sequence_drifted(recorded: list[ToolCall], replayed: list[ToolCall]) -> bool
 # --------------------------------------------------------------------------- #
 
 # Highest priority first; the first code a diff carries is its primary code.
-_CODE_PRIORITY = ("error:", "schema_invalid", "dropped_tool:", "extra_tool:", "reordered_tools",
-                  "quality_worse")
+_CODE_PRIORITY = ("error:", "policy:", "schema_invalid", "args_changed:", "dropped_tool:",
+                  "extra_tool:", "reordered_tools", "quality_worse")
 
 
 def primary_code(codes: list[str]) -> str | None:
@@ -154,8 +155,14 @@ def regression_codes(d: TraceDiff) -> list[str]:
     if d.candidate_status is not ReplayStatus.OK:
         return [f"error:{d.candidate_status.value}"]
     codes: list[str] = []
+    if d.candidate_policy_violations:
+        # Only rules the baseline satisfied are regressions; rules the baseline also
+        # breaks are counted by the absolute policy check and the baseline audit.
+        already = set(d.baseline_policy_violations or [])
+        codes += [f"policy:{v}" for v in d.candidate_policy_violations if v not in already]
     if d.schema_required and d.candidate_schema_valid is False and d.baseline_schema_valid:
         codes.append("schema_invalid")
+    codes += [f"args_changed:{t}" for t in d.changed_side_effect_tools]
     if d.tool_fidelity is ToolFidelity.SEQUENCE_CHANGED:
         codes += [f"dropped_tool:{n}" for n in dict.fromkeys(d.missing_tools)]
         codes += [f"extra_tool:{n}" for n in dict.fromkeys(d.extra_tools)]
@@ -166,20 +173,28 @@ def regression_codes(d: TraceDiff) -> list[str]:
     return codes
 
 
-def diff_replays(trace: Trace, baseline: ReplayResult, candidate: ReplayResult) -> TraceDiff:
-    fidelity, missing, extra, arg_changes = tool_diff(baseline.calls, candidate.calls)
+def diff_replays(
+    trace: Trace,
+    baseline: ReplayResult,
+    candidate: ReplayResult,
+    side_effect_tools: SideEffectTools | None = None,
+) -> TraceDiff:
+    td = tool_diff(baseline.calls, candidate.calls, side_effect_tools)
     d = TraceDiff(
         trace_id=trace.id,
         baseline_model=baseline.model,
         candidate_model=candidate.model,
         variant=candidate.variant,
         candidate_status=candidate.status,
-        tool_fidelity=fidelity,
+        tool_fidelity=td.fidelity,
         baseline_tools=[c.name for c in baseline.calls],
         candidate_tools=[c.name for c in candidate.calls],
-        missing_tools=missing,
-        extra_tools=extra,
-        arg_changes=arg_changes,
+        missing_tools=td.missing,
+        extra_tools=td.extra,
+        arg_changes=td.arg_changes,
+        changed_side_effect_tools=td.side_effect_changes,
+        baseline_policy_violations=violations(trace.expectations, baseline),
+        candidate_policy_violations=violations(trace.expectations, candidate),
         unrecorded_calls=sum(1 for c in candidate.calls if c.matched == "none"),
         baseline_latency_ms=baseline.latency_ms,
         candidate_latency_ms=candidate.latency_ms,
@@ -200,6 +215,8 @@ def diff_replays(trace: Trace, baseline: ReplayResult, candidate: ReplayResult) 
 
 __all__ = [
     "SchemaError",
+    "SideEffectTools",
+    "ToolDiff",
     "check_schema",
     "diff_replays",
     "extract_json",

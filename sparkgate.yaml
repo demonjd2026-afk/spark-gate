@@ -41,12 +41,16 @@ fixer:                               # diagnoses each regression pattern and pro
   examples_per_pattern: 3
 
 gate:
+  min_policy_pass: 0.95              # share of traces whose per-trace policy expectations all hold
   min_tool_fidelity: 0.90            # share of traces with the same tool sequence as baseline
   min_schema_valid: 0.95             # share of final answers that validate against the schema
   max_quality_loss: 0.10             # share of traces the judge says got worse (both orderings)
   max_latency_p95_ratio: 1.50
   max_cost_ratio: 1.50
   max_errors: 0
+  side_effect_tools:                 # tools that change the world -> argument changes are regressions
+    issue_refund: [reason]           # listed args are free text and ignored when comparing
+    create_ticket: [summary]
 
 runtime:
   concurrency: 6

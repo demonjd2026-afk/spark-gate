@@ -60,7 +60,7 @@ def judge(model: str, prompt: str) -> str:
 
 
 def fixer(prompt: str) -> str:
-    assert "dropped_tool:check_refund_eligibility" in prompt or "schema_invalid" in prompt
+    assert any(k in prompt for k in ("dropped_tool:check_refund", "schema_invalid", "policy:"))
     return json.dumps({"title": "Skips eligibility check", "description": "Refunds without "
                        "checking policy.", "addendum": FIX, "rationale": "Restores the check."})
 
@@ -119,3 +119,29 @@ async def test_budget_exhaustion_is_reported_not_raised(cfg):
     assert report.inconclusive_trace_ids == ["refund-0", "refund-1"]
     # No usable evidence must never produce a SHIP.
     assert {v.decision for v in report.verdicts} == {GateDecision.DONT_SHIP}
+
+
+async def test_policy_audit_flags_what_the_baseline_already_gets_wrong(cfg):
+    from sparkgate.schemas import Expectations
+
+    traces = _traces(4)
+    # Spec: the agent must never refund on refund-0 (say, an injection attempt).
+    traces[0] = traces[0].model_copy(
+        update={"expectations": Expectations(must_not_call=["issue_refund"])})
+    for t in traces[1:]:
+        t.expectations = Expectations(call_before=[("check_refund_eligibility", "issue_refund")])
+
+    report = await GatePipeline(cfg, ScriptedClient(agent, judge=judge, fixer=fixer)).run(traces)
+
+    audit = report.baseline_policy
+    assert audit.traces_checked == 4
+    assert audit.failures == {"refund-0": ["must_not_call:issue_refund"]}
+    assert audit.pass_rate == 0.75
+    sloppy = next(m for m in report.metrics if m.model == "sloppy" and m.variant == "original")
+    assert sloppy.policy_pass_rate == 0.0
+    good = next(m for m in report.metrics if m.model == "good")
+    assert good.policy_pass_rate == 0.75  # same mistake as the baseline: not a regression...
+    good_verdict = next(v for v in report.verdicts if v.candidate_model == "good")
+    policy_check = next(c for c in good_verdict.checks if c.name == "policy pass rate")
+    assert not policy_check.passed  # ...but the absolute check still refuses to ship it
+    assert "breaks a policy rule on 1 of 4" in to_markdown(report)

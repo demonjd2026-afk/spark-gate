@@ -125,13 +125,15 @@ class ModelRouter:
     calls already in flight (bounded by `runtime.concurrency`).
     """
 
-    def __init__(self, config: GateConfig) -> None:
+    def __init__(self, config: GateConfig, models: set[str] | None = None) -> None:
+        """`models` limits which endpoints get a client (and so which keys are needed)."""
         self._cfg = config
         self._rt = config.runtime
         self._sem = asyncio.Semaphore(self._rt.concurrency)
         self._budget = _Budget(self._rt.budget_usd)
         self._clients: dict[str, AsyncOpenAI] = {}
-        used_endpoints = {config.models[m].endpoint for m in self._models_in_use()}
+        in_use = models if models is not None else self._models_in_use()
+        used_endpoints = {config.models[m].endpoint for m in in_use}
         for name in sorted(used_endpoints):
             ep = config.endpoints[name]
             self._clients[name] = AsyncOpenAI(

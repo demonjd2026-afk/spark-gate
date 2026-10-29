@@ -16,7 +16,10 @@ import plotly.graph_objects as go
 import streamlit as st
 from pydantic import ValidationError
 
+from sparkgate.gate import PERCENT_CHECKS
+from sparkgate.policy import describe
 from sparkgate.schemas import (
+    CalibrationReport,
     CandidateMetrics,
     GateDecision,
     ReplayResult,
@@ -76,6 +79,14 @@ h1, h2, h3 {{ font-family: 'Archivo', sans-serif; font-stretch: 112%; letter-spa
   background:#E2E7EE; color:{INK}; }}
 .sg-chip.missing {{ background:#F6DAD7; color:#8C211B; text-decoration:line-through; }}
 .sg-chip.extra {{ background:#FBEBC9; color:#7A5208; }}
+.sg-audit {{ background:#FFF6E3; border-left:4px solid {CAUTION}; border-radius:6px; padding:.8rem 1rem;
+  margin:-.6rem 0 1.4rem; color:{INK}; }}
+.sg-audit ul {{ margin:.4rem 0 0 1.1rem; padding:0; }}
+.sg-audit li {{ font-size:.9rem; color:#4A3A12; }}
+.sg-big {{ font-family:'Archivo'; font-stretch:118%; font-weight:800; font-size:2.4rem; line-height:1; color:{INK}; }}
+.sg-stat {{ display:inline-block; margin:0 2.4rem 1rem 0; vertical-align:top; }}
+.sg-bar {{ height:8px; border-radius:4px; background:#E2E7EE; overflow:hidden; min-width:90px; }}
+.sg-bar > span {{ display:block; height:100%; }}
 .sg-pattern {{ border-left:4px solid {COBALT}; padding:.2rem 0 .2rem 1rem; margin:1.2rem 0 .4rem; }}
 .sg-pattern h4 {{ margin:0 0 .2rem; font-family:'Archivo'; font-stretch:105%; }}
 @media (max-width: 720px) {{
@@ -97,7 +108,8 @@ def load_reports(folder: str) -> list[RunReport]:
         return []
     out = []
     for f in sorted(path.glob("*.json")):
-        if f.name == "latest.json" or f.stat().st_size > 50 * 2**20:
+        if (f.name == "latest.json" or f.name.startswith("calibration-")
+                or f.stat().st_size > 50 * 2**20):
             continue
         try:
             out.append(RunReport.model_validate_json(f.read_text(encoding="utf-8")))
@@ -106,10 +118,21 @@ def load_reports(folder: str) -> list[RunReport]:
     return sorted(out, key=lambda r: r.created_at, reverse=True)
 
 
+@st.cache_data(show_spinner=False)
+def load_calibration(folder: str) -> CalibrationReport | None:
+    path = Path(folder) / "calibration-latest.json"
+    if not path.is_file() or path.stat().st_size > 10 * 2**20:
+        return None
+    try:
+        return CalibrationReport.model_validate_json(path.read_text(encoding="utf-8"))
+    except (ValidationError, OSError):
+        return None
+
+
 def fmt_value(name: str, x: float | None) -> str:
     if x is None:
         return "n/a"
-    if name in {"tool-call fidelity", "schema validity", "quality loss rate"}:
+    if name in PERCENT_CHECKS:
         return f"{x:.0%}"
     if name == "run errors":
         return f"{x:.0f}"
@@ -145,6 +168,77 @@ def signal_board(report: RunReport) -> str:
             f'<div class="sg-why">{why}</div></div>'
         )
     return f'<div class="sg-board" role="list">{"".join(rows)}</div>'
+
+
+def policy_audit(report: RunReport) -> str:
+    audit = report.baseline_policy
+    if not audit or audit.pass_rate is None or not audit.failures:
+        return ""
+    items = "".join(
+        f"<li><b>{esc(tid)}</b>: {esc('; '.join(describe(r) for r in rules))}</li>"
+        for tid, rules in list(audit.failures.items())[:8]
+    )
+    if len(audit.failures) > 8:
+        items += f"<li>and {len(audit.failures) - 8} more (see the Traces tab)</li>"
+    return (
+        f'<div class="sg-audit"><b>{esc(audit.model)} already breaks a policy rule on '
+        f"{len(audit.failures)} of {audit.traces_checked} conversations.</b> A gate that only "
+        f"compares against the current model would never flag these.<ul>{items}</ul></div>"
+    )
+
+
+def reliability(cal: CalibrationReport | None) -> None:
+    if cal is None:
+        st.info("No calibration yet. Run it on your traces (free, no model calls):")
+        st.code("sparkgate calibrate            # seeded faults\n"
+                "sparkgate calibrate --judge    # also audit the judge model", language="bash")
+        return
+    stats = []
+    if cal.detection_rate is not None:
+        stats.append((f"{cal.detection_rate:.0%}", "of seeded faults caught"))
+    if cal.false_positive_rate is not None:
+        stats.append((f"{cal.false_positive_rate:.0%}", "false alarms on unchanged runs"))
+    j = cal.judge
+    if j and j.asked_pairs:
+        stats.append((f"{j.orders_agreed / j.asked_pairs:.0%}",
+                      "judge agreed with itself when the order was swapped"))
+    st.markdown("".join(f'<div class="sg-stat"><div class="sg-big">{esc(v)}</div>'
+                        f'<div class="sg-note">{esc(k)}</div></div>' for v, k in stats),
+                unsafe_allow_html=True)
+    st.markdown(f'<p class="sg-note">Each fault is injected into a copy of a recorded run and '
+                f"put through the same checks a real candidate gets. {cal.n_traces} traces.</p>",
+                unsafe_allow_html=True)
+    rows = []
+    for o in cal.operators:
+        rate = o.rate
+        color = GO if (rate or 0) >= 0.95 else (CAUTION if (rate or 0) >= 0.5 else STOP)
+        if o.operator == "unchanged":
+            color = GO if (rate or 0) == 0 else STOP
+        bar = (f'<div class="sg-bar"><span style="width:{(rate or 0) * 100:.0f}%;'
+               f'background:{color}"></span></div>') if rate is not None else ""
+        layers = ", ".join(f"{k} ({v})" for k, v in sorted(o.caught_by.items())) or "—"
+        claim = "yes" if o.should_catch else ("control" if o.operator == "unchanged" else "no")
+        rows.append(f"<tr><td class='sg-model-cell'>{esc(o.description)}</td>"
+                    f"<td class='sg-skip'>{esc(claim)}</td><td class='sg-skip'>{o.mutants}</td>"
+                    f"<td class='sg-skip'>{'' if rate is None else f'{rate:.0%}'}{bar}</td>"
+                    f"<td class='sg-skip' style=\"font-family:'IBM Plex Sans'\">{esc(layers)}</td></tr>")
+    st.markdown('<div class="sg-scroll"><table class="sg-matrix"><thead><tr><th>Seeded fault</th>'
+                "<th>Designed to catch</th><th>Cases</th><th>Flagged</th><th>Caught by</th>"
+                f'</tr></thead><tbody>{"".join(rows)}</tbody></table></div>',
+                unsafe_allow_html=True)
+    if j:
+        lines = []
+        if j.degraded_pairs:
+            lines.append(f"Preferred the real answer over another customer's answer in "
+                         f"{j.degraded_caught} of {j.degraded_pairs} pairs "
+                         f"(picked the wrong one {j.degraded_inverted} times).")
+        if j.control_pairs:
+            lines.append(f"Called two equivalent answers a tie in {j.control_ties} of "
+                         f"{j.control_pairs} pairs.")
+        lines.append(f"Audit spend ${j.cost_usd:.4f}.")
+        st.markdown(f"#### Judge: {esc(j.model)}")
+        st.markdown("".join(f'<p class="sg-note">{esc(x)}</p>' for x in lines),
+                    unsafe_allow_html=True)
 
 
 def check_matrix(report: RunReport) -> str:
@@ -245,6 +339,11 @@ def trace_explorer(report: RunReport) -> None:
         facts.append(("Judge", f"{d.quality.value.replace('_', ' ')}. {d.quality_reason}"))
     if d.schema_errors and d.candidate_schema_valid is False:
         facts.append(("Schema", "; ".join(d.schema_errors)))
+    if d.candidate_policy_violations:
+        facts.append(("Policy", "; ".join(describe(v) for v in d.candidate_policy_violations)))
+    if d.baseline_policy_violations:
+        facts.append((f"Policy ({report.baseline_model})",
+                      "; ".join(describe(v) for v in d.baseline_policy_violations)))
     if d.arg_changes:
         facts.append(("Arguments changed", "; ".join(d.arg_changes)))
     if d.unrecorded_calls:
@@ -287,8 +386,12 @@ def main() -> None:
         unsafe_allow_html=True,
     )
     st.markdown(signal_board(report), unsafe_allow_html=True)
+    if audit_html := policy_audit(report):
+        st.markdown(audit_html, unsafe_allow_html=True)
 
-    tab_checks, tab_patterns, tab_traces = st.tabs(["Checks", "What broke and the fix", "Traces"])
+    tab_checks, tab_patterns, tab_traces, tab_reliability = st.tabs(
+        ["Checks", "What broke and the fix", "Traces", "Can you trust this gate?"]
+    )
     originals = [m for m in report.metrics if m.variant == "original"]
 
     with tab_checks:
@@ -330,6 +433,9 @@ def main() -> None:
 
     with tab_traces:
         trace_explorer(report)
+
+    with tab_reliability:
+        reliability(load_calibration(str(REPORTS)))
 
 
 main()
