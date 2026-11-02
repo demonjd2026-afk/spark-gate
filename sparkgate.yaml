@@ -3,10 +3,7 @@
 
 baseline: muse-spark-1.1            # the version the agent runs on today
 candidates:                          # versions and endpoints you are considering
-  - muse-spark-1.2
-  - muse-spark-1.3
-  - muse-spark-1.2-contributor       # same versions on Meta's lower-cost contributor
-  - muse-spark-1.3-contributor       # endpoint (see the pricing note under models)
+  - muse-spark-1.3                   # proposed: move the support agent to the newest version
 
 traces: traces/support_agent.jsonl
 
