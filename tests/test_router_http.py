@@ -8,12 +8,15 @@ from typing import ClassVar
 import pytest
 
 from sparkgate.config import GateConfig
-from sparkgate.providers import BudgetExceeded, ModelRouter
+from sparkgate.engine import run_agent
+from sparkgate.providers import BudgetExceeded, ModelRouter, OutputTruncated
+from sparkgate.schemas import ReplayStatus
 
 
 class _Handler(BaseHTTPRequestHandler):
     seen: ClassVar[list[dict]] = []
     fail_next = 0
+    truncate = False
 
     def log_message(self, *args):  # silence
         pass
@@ -34,9 +37,12 @@ class _Handler(BaseHTTPRequestHandler):
             "function": {"name": "lookup_order", "arguments": '{"order_id":"LK-1001"}'}}]}
         if body["messages"][-1]["role"] == "tool":
             msg = {"role": "assistant", "content": '{"action":"info_provided"}'}
+        finish = "stop"
+        if type(self).truncate:  # a reasoning model that spent the whole cap thinking
+            msg, finish = {"role": "assistant", "content": None}, "length"
         payload = {
             "id": "x", "object": "chat.completion", "created": 0, "model": body["model"],
-            "choices": [{"index": 0, "message": msg, "finish_reason": "stop"}],
+            "choices": [{"index": 0, "message": msg, "finish_reason": finish}],
             "usage": {"prompt_tokens": 1_000_000, "completion_tokens": 1_000_000,
                       "total_tokens": 2_000_000,
                       "prompt_tokens_details": {"cached_tokens": 500_000}},
@@ -51,7 +57,7 @@ class _Handler(BaseHTTPRequestHandler):
 
 @pytest.fixture
 def server():
-    _Handler.seen, _Handler.fail_next = [], 0
+    _Handler.seen, _Handler.fail_next, _Handler.truncate = [], 0, False
     srv = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     yield f"http://127.0.0.1:{srv.server_address[1]}/v1"
@@ -98,3 +104,21 @@ async def test_router_budget_ceiling(server, monkeypatch):
     with pytest.raises(BudgetExceeded):
         await router.chat("a", [{"role": "user", "content": "again"}])
     await router.aclose()
+
+
+async def test_truncated_reasoning_is_an_error_not_an_empty_answer(server, monkeypatch):
+    monkeypatch.setenv("SG_TEST_KEY", "sk-test")
+    _Handler.truncate = True
+    router = ModelRouter(_cfg(server))
+    with pytest.raises(OutputTruncated):
+        await router.chat("a", [{"role": "user", "content": "hi"}])
+
+    class _NoTools:
+        def execute(self, name, arguments):  # never reached
+            raise AssertionError
+
+    result = await run_agent(router, model="a", trace_id="t1", system="s", user="u",
+                             tools=[], executor=_NoTools(), max_turns=2)
+    await router.aclose()
+    assert result.status is ReplayStatus.API_ERROR
+    assert "output budget" in (result.error or "")

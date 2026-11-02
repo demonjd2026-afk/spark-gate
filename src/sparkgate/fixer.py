@@ -18,10 +18,12 @@ from pydantic import BaseModel, Field, ValidationError
 from sparkgate.diff import extract_json, primary_code
 from sparkgate.judge import fence, render_run
 from sparkgate.policy import describe
-from sparkgate.providers import BudgetExceeded, ChatClient
+from sparkgate.providers import BudgetExceeded, ChatClient, OutputTruncated
 from sparkgate.schemas import RegressionPattern, ReplayResult, Trace, TraceDiff
 
 log = logging.getLogger(__name__)
+
+_FIXER_MAX_TOKENS = 8_000  # room for hidden reasoning before the diagnosis
 
 _FIXER_SYSTEM = """You diagnose behavior regressions that appeared when an AI agent was
 moved from one model version to another, and propose the smallest system-prompt change
@@ -139,8 +141,8 @@ class PromptFixer:
             {"role": "user", "content": user},
         ]
         try:
-            resp = await self._client.chat(self._model, messages, max_tokens=900)
-        except (BudgetExceeded, openai.APIError) as exc:
+            resp = await self._client.chat(self._model, messages, max_tokens=_FIXER_MAX_TOKENS)
+        except (BudgetExceeded, OutputTruncated, openai.APIError) as exc:
             log.warning("fixer call failed for %s: %s", pattern.id, exc)
             return pattern
         try:

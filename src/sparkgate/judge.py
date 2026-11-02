@@ -22,10 +22,14 @@ import openai
 from pydantic import BaseModel, Field, ValidationError
 
 from sparkgate.diff import extract_json
-from sparkgate.providers import BudgetExceeded, ChatClient
+from sparkgate.providers import BudgetExceeded, ChatClient, OutputTruncated
 from sparkgate.schemas import QualityVerdict, ReplayResult, Trace
 
 log = logging.getLogger(__name__)
+
+# Reasoning models spend most of this on hidden reasoning (muse-spark-1.3 used ~270-400
+# tokens before writing a one-line verdict), so the cap leaves generous room.
+_JUDGE_MAX_TOKENS = 4_000
 
 _JUDGE_SYSTEM = """You are an impartial reviewer of a customer-facing AI agent.
 You will see the agent's instructions, the customer's message, and two candidate runs
@@ -98,8 +102,8 @@ class PairwiseJudge:
         cost = 0.0
         for attempt in range(2):
             try:
-                resp = await self._client.chat(self._model, messages, max_tokens=400)
-            except (BudgetExceeded, openai.APIError) as exc:
+                resp = await self._client.chat(self._model, messages, max_tokens=_JUDGE_MAX_TOKENS)
+            except (BudgetExceeded, OutputTruncated, openai.APIError) as exc:
                 log.warning("judge call failed: %s", exc)
                 return None, cost
             cost += resp.usage.cost_usd

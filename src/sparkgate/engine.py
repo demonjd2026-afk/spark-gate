@@ -12,7 +12,7 @@ from typing import Any, Protocol
 
 import openai
 
-from sparkgate.providers import BudgetExceeded, ChatClient
+from sparkgate.providers import BudgetExceeded, ChatClient, OutputTruncated
 from sparkgate.schemas import (
     ReplayResult,
     ReplayStatus,
@@ -173,6 +173,10 @@ async def run_agent(
     except BudgetExceeded as exc:
         result.status = ReplayStatus.BUDGET_EXCEEDED
         result.error = str(exc)
+    except OutputTruncated as exc:
+        result.status = ReplayStatus.API_ERROR
+        result.error = str(exc)
+        log.warning("replay %s on %s failed: %s", trace_id, model, result.error)
     except openai.APIError as exc:
         result.status = ReplayStatus.API_ERROR
         result.error = f"{type(exc).__name__}: {str(exc)[:500]}"

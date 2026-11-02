@@ -36,6 +36,10 @@ _TRANSIENT = (
 )
 
 
+class OutputTruncated(RuntimeError):
+    """The model hit its output-token cap (usually on hidden reasoning) before answering."""
+
+
 class BudgetExceeded(RuntimeError):
     """The run's spend ceiling was reached; no further model calls are made."""
 
@@ -201,7 +205,8 @@ class ModelRouter:
 
         if not resp.choices:
             return ChatResponse(content=None, tool_calls=[], usage=usage, latency_ms=latency_ms)
-        msg = resp.choices[0].message
+        choice = resp.choices[0]
+        msg = choice.message
         calls = [
             ToolCallRequest(
                 id=tc.id,
@@ -212,6 +217,12 @@ class ModelRouter:
             for tc in (msg.tool_calls or [])
             if getattr(tc, "function", None) is not None
         ]
+        if getattr(choice, "finish_reason", None) == "length" and not msg.content and not calls:
+            cap = kwargs[self._rt.max_tokens_param]
+            raise OutputTruncated(
+                f"{model} used its whole output budget ({cap} tokens) without answering; "
+                "raise runtime.max_output_tokens or set runtime.reasoning_effort"
+            )
         return ChatResponse(
             content=msg.content, tool_calls=calls, usage=usage, latency_ms=latency_ms
         )

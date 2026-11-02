@@ -45,7 +45,7 @@ runtime:
   concurrency: 6
   max_tool_turns: 8
   temperature: 0
-  max_output_tokens: 2048
+  max_output_tokens: 8192           # reasoning tokens count toward this; billed only when used
   request_timeout_s: 120
   max_retries: 5
   budget_usd: 15                     # hard ceiling for one run
