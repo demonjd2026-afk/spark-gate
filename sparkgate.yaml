@@ -2,9 +2,11 @@
 # environment variable that holds its key.
 
 baseline: muse-spark-1.1            # the version the agent runs on today
-candidates:                          # versions you are considering
+candidates:                          # versions and endpoints you are considering
   - muse-spark-1.2
   - muse-spark-1.3
+  - muse-spark-1.2-contributor       # same versions on Meta's lower-cost contributor
+  - muse-spark-1.3-contributor       # endpoint (see the pricing note under models)
 
 traces: traces/support_agent.jsonl
 
@@ -18,6 +20,10 @@ models:
   muse-spark-1.1: {endpoint: meta, input_per_mtok: 1.25, output_per_mtok: 4.25, cached_input_per_mtok: 0.15}
   muse-spark-1.2: {endpoint: meta, input_per_mtok: 1.25, output_per_mtok: 4.25, cached_input_per_mtok: 0.15}
   muse-spark-1.3: {endpoint: meta, input_per_mtok: 1.25, output_per_mtok: 4.25, cached_input_per_mtok: 0.15}
+  # Contributor endpoint: lower price in exchange for Meta using prompts and completions to
+  # improve its products. Rates as listed from Meta's pricing page (Sep-Oct 2026).
+  muse-spark-1.2-contributor: {endpoint: meta, input_per_mtok: 0.10, output_per_mtok: 0.20, cached_input_per_mtok: 0.002}
+  muse-spark-1.3-contributor: {endpoint: meta, input_per_mtok: 0.10, output_per_mtok: 0.20, cached_input_per_mtok: 0.002}
 
 judge:                               # pairwise, position-swapped quality judge
   enabled: true
