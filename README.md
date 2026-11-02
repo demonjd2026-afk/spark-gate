@@ -16,12 +16,14 @@ All code in this repository was written during the hackathon's building period
 |---|---|---|
 | Baseline: the version the agent runs on today | `muse-spark-1.1` | Meta Model API |
 | Upgrade candidates | `muse-spark-1.2`, `muse-spark-1.3` | Meta Model API |
+| Lower-cost candidates | `muse-spark-1.2-contributor`, `muse-spark-1.3-contributor` | Meta Model API (contributor endpoint) |
 | Pairwise quality judge (position-swapped) | `muse-spark-1.3` | Meta Model API |
 | Regression diagnosis and prompt-fix proposals | `muse-spark-1.3` | Meta Model API |
 | The demo agent being tested | whichever model is under test | Meta Model API |
 
-The same 24 conversations run on every model, so the report answers one practical
-question per candidate: *is this Muse Spark version safe for this agent?*
+The same 24 conversations run on every model, so the report answers two practical
+questions side by side: *is the next Muse Spark version safe for this agent?* and *can
+it move to the much cheaper contributor endpoint without breaking?*
 
 ---
 
@@ -32,6 +34,32 @@ Muse Spark has three versions you can call by name today (`muse-spark-1.1`, `1.2
 may skip a policy check, call tools in a different order, or stop returning valid JSON.
 Benchmarks don't tell you any of that about *your* agent. Spark Gate answers the
 question with your own traffic.
+
+Meta also serves each version on a contributor endpoint at a fraction of the price,
+in exchange for using the traffic to improve its products. Whether *your* agent
+behaves the same there is the same kind of question, and Spark Gate answers it the
+same way.
+
+## Results from a real run
+
+24 conversations recorded on `muse-spark-1.1`, then replayed on four candidates through
+the Meta Model API. Run `57d546e2e5cb`, 12.5 minutes, **$3.45** in total. The full
+report is in [`results/`](results/) and on the dashboard.
+
+| Candidate | Verdict | What the gate found |
+|---|---|---|
+| `muse-spark-1.2` | ✅ Ship | Every check passed. 0.80× the cost of the baseline. |
+| `muse-spark-1.3` | ⛔ Don't ship | Tool-call fidelity 88%, judged worse on 17% of conversations, p95 latency 1.78×. The proposed prompt fix restored tool fidelity but not quality or latency. |
+| `muse-spark-1.2-contributor` | ⛔ Don't ship | 2 of 24 final answers fail the output schema, policy rules broken on 2 conversations, judged worse on 17%, at 0.04× the cost. |
+| `muse-spark-1.3-contributor` | ⛔ Don't ship | Policy rules broken on 2 conversations, judged worse on 12%, p95 latency 3.19×, at 0.09× the cost. |
+
+The baseline re-run changed its own tool sequence on 4% of conversations (the noise
+floor), and broke no policy rule. Calibration on the same traces caught 100% of seeded
+faults with 0% false positives (see below).
+
+One run is a sample, not a law: thresholds of 90-95% on 24 conversations mean one or
+two changed conversations can decide a verdict. That is why every verdict comes with
+the exact traces behind it, and why the noise floor is reported.
 
 ## How it works
 
@@ -218,6 +246,13 @@ ruff check . && pytest -q
 The suite runs fully offline: scripted models drive the real pipeline end to end, and
 a local OpenAI-compatible HTTP server exercises the router's wire format, retries,
 cached-token pricing and budget ceiling through the real OpenAI SDK.
+
+## What's next
+
+- Publish the Action on the GitHub Marketplace so any repo running a Muse Spark agent can
+  add the gate with a few lines of YAML.
+- Repeat each candidate run a few times and report how stable each verdict is.
+- Record traces straight from production logs instead of a scripted demo agent.
 
 ## Limitations
 
