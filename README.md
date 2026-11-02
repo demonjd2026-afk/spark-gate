@@ -1,10 +1,10 @@
 # Spark Gate
 
 **A CI safety gate for model upgrades.** Spark Gate takes an agent's real traces,
-replays them on other Muse Spark versions and on Meta's open-weight models (Muse Spark
-Open, Muse Glimmer), measures what actually changed, asks Muse Spark to diagnose and fix each regression, re-tests the fix, and
-returns a verdict: **ship**, **ship with fix**, or **don't ship**. A GitHub Action
-blocks the pull request when the answer is no.
+replays them on other Muse Spark versions, measures what actually changed, asks Muse
+Spark to diagnose and fix each regression, re-tests the fix, and returns a verdict:
+**ship**, **ship with fix**, or **don't ship**. A GitHub Action blocks the pull request
+when the answer is no.
 
 Built for the Meta Global AI Developer Hackathon (Indie track, *Push the Frontier*).
 All code in this repository was written during the hackathon's building period
@@ -16,14 +16,12 @@ All code in this repository was written during the hackathon's building period
 |---|---|---|
 | Baseline: the version the agent runs on today | `muse-spark-1.1` | Meta Model API |
 | Upgrade candidates | `muse-spark-1.2`, `muse-spark-1.3` | Meta Model API |
-| Open-weight candidates (hosted → open migration) | Muse Spark Open, Muse Glimmer 30B | Baseten, Fireworks, or your own endpoint (e.g. Modal) |
 | Pairwise quality judge (position-swapped) | `muse-spark-1.3` | Meta Model API |
 | Regression diagnosis and prompt-fix proposals | `muse-spark-1.3` | Meta Model API |
-| The demo agent being tested | whichever model is under test | all of the above |
+| The demo agent being tested | whichever model is under test | Meta Model API |
 
-The same 24 conversations run on every model, so the report answers two practical
-questions side by side: *is the next Muse Spark version safe?* and *can we move this
-agent from the hosted API to open weights without breaking it?*
+The same 24 conversations run on every model, so the report answers one practical
+question per candidate: *is this Muse Spark version safe for this agent?*
 
 ---
 
@@ -74,7 +72,7 @@ flowchart LR
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[app,dev]"
-cp .env.example .env    # fill MODEL_API_KEY (and Glimmer host details), then: set -a; . ./.env; set +a
+cp .env.example .env    # fill META_API_KEY, then: set -a; . ./.env; set +a
 
 # 1. Record real traces of the demo support agent on the current production model
 python -m demo.support_agent.record --model muse-spark-1.1 --out traces/support_agent.jsonl
@@ -139,19 +137,11 @@ Everything lives in [`sparkgate.yaml`](sparkgate.yaml): baseline, candidates, en
 per-model pricing, judge/fixer models, gate thresholds and runtime limits (concurrency,
 retries, timeouts, a hard **budget ceiling** per run).
 
-**Open-weight models** are not served by the Meta Model API. The config ships ready for
-three hosts; set the key for whichever you have and the rest are skipped (and listed as
-skipped in the report). `sparkgate validate` shows which models are ready.
-
-| Model key | Host | Model id sent | Keys |
-|---|---|---|---|
-| `muse-spark-open` | Baseten Model APIs | `meta-models/muse-spark-open-1026` | `BASETEN_API_KEY` |
-| `muse-spark-open-fireworks` | Fireworks serverless | `accounts/fireworks/models/muse-spark-open` | `FIREWORKS_API_KEY` |
-| `muse-glimmer-30b` | any OpenAI-compatible server you run (e.g. Modal) | `meta-models/Muse-Glimmer-30B` (change to match your server) | `GLIMMER_BASE_URL`, `GLIMMER_API_KEY` |
-
-Prices are set only where the host publishes a per-token rate; otherwise the cost
-check is skipped for that model instead of reporting a guessed number. Pass `--strict`
-to fail when a configured candidate has no key.
+A candidate whose endpoint has no key set is skipped and listed as skipped in the
+report; pass `--strict` to fail instead. `sparkgate validate` shows which models are
+ready. The cost check uses the per-token prices in the config; a model with no price
+has its cost check skipped rather than filled with a guessed number. Any
+OpenAI-compatible endpoint can be added under `endpoints` and `models`.
 
 If an endpoint rejects a request parameter, adjust `runtime`:
 `temperature: null` omits temperature; `max_tokens_param: max_completion_tokens`
@@ -167,7 +157,7 @@ Bring your own traces: one JSON object per line, matching `Trace` in
   with: { persist-credentials: false }
 - uses: demonjd2026-afk/spark-gate@main
   env:
-    MODEL_API_KEY: ${{ secrets.MODEL_API_KEY }}
+    META_API_KEY: ${{ secrets.META_API_KEY }}
   with:
     config: sparkgate.yaml
     candidates: muse-spark-1.3
