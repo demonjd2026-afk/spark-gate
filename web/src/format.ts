@@ -22,6 +22,7 @@ export function checkValue(c: Pick<Check, "name" | "actual">): string {
   if (c.actual == null) return "–";
   if (c.name.includes("ratio")) return ratio(c.actual);
   if (c.name === "run errors") return String(Math.round(c.actual));
+  if (c.name === "net quality loss") return `${c.actual > 0 ? "+" : ""}${pct(c.actual)}`;
   return pct(c.actual);
 }
 

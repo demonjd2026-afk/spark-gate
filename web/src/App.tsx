@@ -166,7 +166,7 @@ export default function App() {
             />
             <Stability
               runs={index.runs}
-              maxLoss={report.verdicts[0]?.checks.find((c) => c.name === "quality loss rate")?.threshold ?? 0.1}
+              maxLoss={report.verdicts[0]?.checks.find((c) => c.name === "net quality loss")?.threshold ?? 0.1}
             />
             <Trust calibration={index.calibration} />
 

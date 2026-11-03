@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { RunReport, RunSummary } from "./types";
 import { DECISION, endpointOf, heldBecause, ratio, versionOf } from "./format";
 
@@ -18,7 +18,9 @@ function useReducedMotion() {
 }
 
 /** A row of split-flap tiles that riffles through glyphs before settling on `text`. */
-function Flaps({ text, width, delay, className = "" }: { text: string; width: number; delay: number; className?: string }) {
+function Flaps({
+  text, width, delay, armed, className = "",
+}: { text: string; width: number; delay: number; armed: boolean; className?: string }) {
   const target = text.toUpperCase().padEnd(width, " ").slice(0, width);
   const reduced = useReducedMotion();
   const [shown, setShown] = useState(reduced ? target : " ".repeat(width));
@@ -28,6 +30,7 @@ function Flaps({ text, width, delay, className = "" }: { text: string; width: nu
       setShown(target);
       return;
     }
+    if (!armed) return;
     let frame = 0;
     let timer: number | undefined;
     const start = window.setTimeout(() => {
@@ -46,7 +49,7 @@ function Flaps({ text, width, delay, className = "" }: { text: string; width: nu
       window.clearTimeout(start);
       window.clearInterval(timer);
     };
-  }, [target, width, delay, reduced]);
+  }, [target, width, delay, reduced, armed]);
 
   return (
     <span className={`flaps ${className}`} aria-label={text}>
@@ -80,8 +83,36 @@ export function Board({
   const statusTiles = Math.max(4, ...report.verdicts.map((v) => DECISION[v.decision].word.length));
   const costOf = (m: string) => report.metrics.find((x) => x.model === m && x.variant === "original")?.cost_ratio;
 
+  // The tiles flip when the board first scrolls into view, not on page load.
+  const ref = useRef<HTMLElement>(null);
+  const [armed, setArmed] = useState(false);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || armed) return;
+    if (!("IntersectionObserver" in window)) {
+      setArmed(true);
+      return;
+    }
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) {
+          setArmed(true);
+          io.disconnect();
+        }
+      },
+      { threshold: 0.35 },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [armed]);
+
   return (
-    <section className="board" aria-labelledby="board-title" style={{ ["--status-tiles" as string]: statusTiles }}>
+    <section
+      ref={ref}
+      className="board"
+      aria-labelledby="board-title"
+      style={{ ["--status-tiles" as string]: statusTiles }}
+    >
       <div className="board-head">
         <h2 id="board-title" className="board-title">
           Departures from {report.baseline_model}
@@ -110,22 +141,23 @@ export function Board({
               aria-pressed={isSel}
             >
               <span role="cell" className="c-version">
-                <Flaps text={`Spark ${versionOf(v.candidate_model)}`} width={9} delay={150 + i * 220} />
+                <Flaps text={`Spark ${versionOf(v.candidate_model)}`} width={9} delay={150 + i * 220} armed={armed} />
               </span>
               <span role="cell" className="c-endpoint">
                 <Flaps
                   text={endpointOf(v.candidate_model).replace(" endpoint", "")}
                   width={11}
                   delay={250 + i * 220}
+                  armed={armed}
                   className="flaps-dim"
                 />
               </span>
               <span role="cell" className="c-cost">
-                <Flaps text={ratio(costOf(v.candidate_model))} width={5} delay={350 + i * 220} />
+                <Flaps text={ratio(costOf(v.candidate_model))} width={5} delay={350 + i * 220} armed={armed} />
               </span>
               <span role="cell" className="status-cell">
                 <span className={`lamp lamp-${d.tone}`} aria-hidden="true" />
-                <Flaps text={d.word} width={statusTiles} delay={450 + i * 220} className={`flaps-${d.tone}`} />
+                <Flaps text={d.word} width={statusTiles} delay={450 + i * 220} armed={armed} className={`flaps-${d.tone}`} />
               </span>
               <span className="board-remark" role="cell">
                 {heldBecause(v.checks)}

@@ -26,10 +26,12 @@ for (const name of readdirSync(resultsDir).sort()) {
     candidates[v.candidate_model] = {
       decision: v.decision,
       quality_loss_rate: m.quality_loss_rate ?? null,
+      quality_net_loss_rate: m.quality_net_loss_rate ?? null,
       tool_fidelity_rate: m.tool_fidelity_rate ?? null,
       policy_pass_rate: m.policy_pass_rate ?? null,
       cost_ratio: m.cost_ratio ?? null,
       losses: diffs.filter((d) => d.quality === "baseline_better").length,
+      wins: diffs.filter((d) => d.quality === "candidate_better").length,
       fidelity_ok: diffs.filter((d) => d.candidate_status === "ok" && d.tool_fidelity !== "sequence_changed").length,
       traces: diffs.length,
     };

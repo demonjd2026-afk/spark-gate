@@ -48,8 +48,11 @@ export function Stability({ runs, maxLoss }: { runs: RunSummary[]; maxLoss: numb
               const rows = ordered.map((r) => r.candidates[m]).filter(Boolean);
               const held = rows.filter((c) => c.decision === "dont_ship").length;
               const losses = rows.reduce((s, c) => s + c.losses, 0);
+              const wins = rows.reduce((s, c) => s + (c.wins ?? 0), 0);
+              const fidOk = rows.reduce((s, c) => s + c.fidelity_ok, 0);
               const n = rows.reduce((s, c) => s + c.traces, 0);
-              const [lo, hi] = wilson(losses, n);
+              const net = (losses - wins) / n;
+              const [lo, hi] = wilson(fidOk, n);
               const same = rows.every((c) => c.decision === rows[0].decision);
               return (
                 <tr key={m}>
@@ -64,7 +67,9 @@ export function Stability({ runs, maxLoss }: { runs: RunSummary[]; maxLoss: numb
                     return (
                       <td key={r.run_id}>
                         <span className={`mini tone-${d.tone}`}>{d.word}</span>
-                        <span className="stab-loss">{pct(c.quality_loss_rate)} worse</span>
+                        <span className="stab-loss">
+                          fidelity {pct(c.tool_fidelity_rate)} · net quality {(c.quality_net_loss_rate ?? 0) > 0 ? "+" : ""}{pct(c.quality_net_loss_rate)}
+                        </span>
                       </td>
                     );
                   })}
@@ -75,8 +80,9 @@ export function Stability({ runs, maxLoss }: { runs: RunSummary[]; maxLoss: numb
                         : `Held in ${held} of ${rows.length}`}
                     </strong>
                     <span>
-                      {pct(losses / n)} judged worse, likely between {pct(lo)} and {pct(hi)}
-                      {hi < maxLoss ? ", safely under the limit" : lo > maxLoss ? ", clearly over the limit" : ", the limit is inside this range"}
+                      Tool fidelity {pct(fidOk / n)} over {n} replays, likely between {pct(lo)} and {pct(hi)}.
+                      Net quality {net > 0 ? "+" : ""}{pct(net)} ({losses} worse, {wins} better)
+                      {net <= maxLoss ? ", within the gate's limit" : ", over the gate's limit"}.
                     </span>
                   </td>
                 </tr>

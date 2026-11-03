@@ -31,6 +31,7 @@ export interface Metrics {
   policy_pass_rate: number;
   quality_win_rate: number | null;
   quality_loss_rate: number | null;
+  quality_net_loss_rate: number | null;
   latency_p95_ratio: number | null;
   cost_ratio: number | null;
   regressions: number;
@@ -147,10 +148,12 @@ export interface Calibration {
 export interface RunCandidateSummary {
   decision: Decision;
   quality_loss_rate: number | null;
+  quality_net_loss_rate: number | null;
   tool_fidelity_rate: number | null;
   policy_pass_rate: number | null;
   cost_ratio: number | null;
   losses: number;
+  wins: number;
   fidelity_ok: number;
   traces: number;
 }

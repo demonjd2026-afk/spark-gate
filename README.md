@@ -42,26 +42,36 @@ in exchange for using the traffic to improve its products. Whether *your* agent
 behaves the same there is the same kind of question, and Spark Gate answers it the
 same way.
 
-## Results from a real run
+## Results from real runs
 
 24 conversations recorded on `muse-spark-1.1`, then replayed on four candidates through
-the Meta Model API. Run `57d546e2e5cb`, 12.5 minutes, **$3.45** in total. The full
-report is in [`results/`](results/) and on the dashboard.
+the Meta Model API. The headline run replays every conversation **3 times** per model
+(run `66a5de5acb63`, 72 replays per candidate, 65 minutes, **$13.47**). Every number
+below comes from the reports committed in [`results/`](results/) and is on the
+[dashboard](https://demonjd2026-afk.github.io/spark-gate/).
 
-| Candidate | Verdict | What the gate found |
+| Candidate | Verdict | What the gate found (pooled over 72 replays) |
 |---|---|---|
-| `muse-spark-1.2` | ✅ Ship | Every check passed. 0.80× the cost of the baseline. |
-| `muse-spark-1.3` | ⛔ Don't ship | Tool-call fidelity 88%, judged worse on 17% of conversations, p95 latency 1.78×. The proposed prompt fix restored tool fidelity but not quality or latency. |
-| `muse-spark-1.2-contributor` | ⛔ Don't ship | 2 of 24 final answers fail the output schema, policy rules broken on 2 conversations, judged worse on 17%, at 0.04× the cost. |
-| `muse-spark-1.3-contributor` | ⛔ Don't ship | Policy rules broken on 2 conversations, judged worse on 12%, p95 latency 3.19×, at 0.09× the cost. |
+| `muse-spark-1.2` | ✅ Ship | Every check passed: tool fidelity 89% against a threshold of 82% (90% less the baseline's own 8% drift), net quality +1%, 0.81× the cost. |
+| `muse-spark-1.3` | ⛔ Don't ship | p95 latency 2.12× today's. Tool fidelity and quality were fine. The proposed prompt fix did not change that. |
+| `muse-spark-1.2-contributor` | ⛔ Don't ship | Policy rules broken and invalid JSON on 7% of replays (threshold 5%), at 0.04× the cost. |
+| `muse-spark-1.3-contributor` | ⛔ Don't ship | p95 latency 2.47× today's, at 0.05× the cost. |
 
-The baseline re-run changed its own tool sequence on 4% of conversations (the noise
-floor), and broke no policy rule. Calibration on the same traces caught 100% of seeded
-faults with 0% false positives (see below).
+Two findings from the runs shaped the gate itself:
 
-One run is a sample, not a law: thresholds of 90-95% on 24 conversations mean one or
-two changed conversations can decide a verdict. That is why every verdict comes with
-the exact traces behind it, and why the noise floor is reported.
+- **One replay is not enough.** Three earlier single-replay runs of the same suite gave
+  three different verdicts for `muse-spark-1.2` (cleared, then held on fidelity, then
+  held on quality), and the baseline disagreed with its own recording on 4%, 12% and 8%
+  of conversations. Reasoning models are not deterministic at temperature 0. That is why
+  `runtime.repeats` exists and why the dashboard shows every run side by side.
+- **A judge's "worse" rate is mostly noise.** Across the pooled run the judge called the
+  candidate worse on 17-21% of replays and *better* on 17-24%. Net, there was no shift.
+  The gate therefore scores *judged worse minus judged better*, and the fidelity threshold
+  is lowered by the baseline's measured drift. `sparkgate regate` re-applies the rules to
+  stored runs without new model calls, which is how the earlier runs were re-scored.
+
+Calibration on the same traces caught 100% of 150 seeded faults with 0% false positives,
+and the judge audit scored 24/24, 12/12 and 36/36 (see below).
 
 ## How it works
 
@@ -91,11 +101,12 @@ flowchart LR
 | **Baseline re-run + noise floor** | The baseline is replayed too, and compared against its own recording. | Candidates are compared with a fresh baseline run, not a stale recording, and you see how much the baseline drifts on its own. |
 | **Diff** (`diff.py`) | Tool sequence (multiset missing/extra, reorder), changed arguments, JSON Schema validity of the final answer, latency, cost. | Pure functions, no model calls: the parts that can be measured exactly are. |
 | **Judge** (`judge.py`) | Muse Spark compares baseline vs candidate twice, in both orders. A winner counts only if both orders agree; otherwise it is a tie. | Removes position bias. Responses are fenced as untrusted data; judge output must parse into a fixed shape. |
-| **Gate** (`gate.py`) | Tool fidelity, schema validity, quality-loss rate, p95 latency ratio, cost ratio, run errors, each against thresholds in `sparkgate.yaml`. | A check with no data (unpriced model, judge disabled) is reported as *skipped*, never filled with a made-up number. |
+| **Gate** (`gate.py`) | Tool fidelity, schema validity, policy pass rate, net quality loss, p95 latency ratio, cost ratio, run errors, each against thresholds in `sparkgate.yaml`. | A check with no data (unpriced model, judge disabled) is reported as *skipped*, never filled with a made-up number. Two checks are measured against the models' own noise: the fidelity threshold is lowered by the baseline's measured drift against itself, and quality counts *judged worse minus judged better*, because a judge choosing between near-equal answers picks each side about equally often. |
 | **Policy expectations** (`policy.py`) | Optional per-trace rules: tools that must / must not be called, call order, argument bounds (e.g. refund ≤ the item price), allowed values in the final answer, and text that must never be revealed. Checked on the baseline *and* every candidate. | Comparing against the baseline alone can't catch a mistake the baseline already makes. A rule the baseline also breaks isn't counted as a regression, but the absolute check still blocks the ship, and the report lists what production already gets wrong. |
 | **Side-effect arguments** (`diff.py`) | Tools listed under `gate.side_effect_tools` (refunds, tickets) are compared argument by argument, ignoring free-text fields such as `reason`. | A changed search query is harmless; a changed refund amount isn't. |
 | **Diagnose & fix** (`fixer.py`) | Regressions are grouped deterministically by primary code (e.g. `dropped_tool:check_refund_eligibility`). Muse Spark explains each group and proposes a short system-prompt addendum. | The model never decides which traces belong together; it only explains a group it is given. |
 | **Verify** (`pipeline.py`) | Each fix is replayed on the traces it targets; accepted fixes are then applied *together* and the whole suite is re-run and re-gated. | A fix that repairs one pattern but breaks other traces cannot let a model through. |
+| **Repeats** (`runtime.repeats`) | Every trace is replayed N times on every model, the baseline included. Each candidate replay is diffed against the baseline replay of the same repeat, and every rate pools all N × traces pairs. | Reasoning models are not deterministic even at temperature 0, and on 24 traces one changed answer moves a rate by 4 points. Three single replays of this suite gave three different verdicts for the same model (see below); pooled replays make the rates stable enough to gate on. |
 
 ## Quickstart
 
@@ -111,6 +122,7 @@ python -m demo.support_agent.record --model muse-spark-1.1 --out traces/support_
 sparkgate validate
 
 # 3. Run the gate (exit code 0 = pass, 1 = fail, 2 = config/input error)
+#    The config replays every trace 3 times per model; --repeats 1 is a quick, noisier look.
 sparkgate run --markdown report.md
 
 # 4. Measure the gate itself (offline; add --judge to audit the judge model)
@@ -119,11 +131,14 @@ sparkgate calibrate
 # 5. Explore the result locally
 streamlit run app/dashboard.py
 #    or the published dashboard: cd web && npm ci && npm run dev
+
+# Changed a threshold? Re-score a stored run without spending anything
+sparkgate regate latest --write
 ```
 
 Other commands: `sparkgate report latest`, `sparkgate history`,
-`sparkgate run --candidate muse-spark-1.3` (gate one model), `--fail-on not_ship`
-(also fail on *ship with fix*).
+`sparkgate run --candidate muse-spark-1.3` (gate one model), `--repeats 1` (one replay
+per trace), `--fail-on not_ship` (also fail on *ship with fix*).
 
 ## The demo agent
 
@@ -156,7 +171,10 @@ checks, only by the judge.
 `sparkgate calibrate --judge` also audits the judge model (a few cents of API calls).
 For each trace it pairs the real answer with another customer's answer (a sound judge
 prefers the real one in both orderings) and with a re-serialised copy of itself (a
-sound judge calls it a tie), and reports how often the two orderings agreed.
+sound judge calls it a tie), and reports how often the two orderings agreed. On the
+demo traces, `muse-spark-1.3` preferred the real answer 24 of 24 times, never preferred
+the wrong one, called the re-serialised copy a tie 12 of 12 times, and its two orderings
+agreed 36 of 36 times ($0.39).
 
 The demo's expectations are themselves tested (`tests/test_demo_spec.py`). A rule-based
 agent that follows the written policy satisfies every expectation against the real
@@ -255,7 +273,8 @@ cached-token pricing and budget ceiling through the real OpenAI SDK.
 
 - Publish the Action on the GitHub Marketplace so any repo running a Muse Spark agent can
   add the gate with a few lines of YAML.
-- Repeat each candidate run a few times and report how stable each verdict is.
+- Gate on confidence intervals rather than point rates, so a candidate near a threshold
+  is reported as "not enough evidence" instead of a coin-flip verdict.
 - Record traces straight from production logs instead of a scripted demo agent.
 
 ## Limitations
@@ -268,6 +287,9 @@ cached-token pricing and budget ceiling through the real OpenAI SDK.
 - Prompt fixes are suggestions verified by replay, not guarantees on unseen traffic.
 - Calibration measures the checks against the fault types it seeds; a fault type it
   doesn't model isn't covered by its numbers.
+- The models are not deterministic, so neither is the gate. `repeats` narrows the
+  spread and the noise floor shows how much the baseline disagrees with itself, but a
+  candidate sitting right at a threshold can still land on either side of it.
 
 ## License
 
