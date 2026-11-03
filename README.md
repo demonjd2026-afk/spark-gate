@@ -1,5 +1,7 @@
 # Spark Gate
 
+**Live dashboard: [demonjd2026-afk.github.io/spark-gate](https://demonjd2026-afk.github.io/spark-gate/)** · Example blocked upgrade: [pull request #1](https://github.com/demonjd2026-afk/spark-gate/pull/1)
+
 **A CI safety gate for model upgrades.** Spark Gate takes an agent's real traces,
 replays them on other Muse Spark versions, measures what actually changed, asks Muse
 Spark to diagnose and fix each regression, re-tests the fix, and returns a verdict:
@@ -114,8 +116,9 @@ sparkgate run --markdown report.md
 # 4. Measure the gate itself (offline; add --judge to audit the judge model)
 sparkgate calibrate
 
-# 5. Explore the result
+# 5. Explore the result locally
 streamlit run app/dashboard.py
+#    or the published dashboard: cd web && npm ci && npm run dev
 ```
 
 Other commands: `sparkgate report latest`, `sparkgate history`,
@@ -232,7 +235,8 @@ src/sparkgate/
   report.py     PR-comment Markdown
   cli.py        `sparkgate` CLI
 demo/support_agent/  the demo agent, backend, scenarios and recorder
-app/dashboard.py     Streamlit dashboard
+app/dashboard.py     Streamlit dashboard (local exploration)
+web/                 React dashboard, built from results/ and published to GitHub Pages
 action.yml           GitHub Action
 tests/               offline test suite (scripted models + a local HTTP endpoint)
 ```
