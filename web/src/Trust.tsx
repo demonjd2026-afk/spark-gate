@@ -63,6 +63,34 @@ export function Trust({ calibration }: { calibration: Calibration | null }) {
         </tbody>
       </table>
 
+      {calibration.judge && calibration.judge.asked_pairs > 0 && (
+        <div className="judge-audit">
+          <h3>And the judge itself?</h3>
+          <p>
+            Quality is the one check a model decides, so the judge ({calibration.judge.model}) was tested too: each
+            real answer was paired with a wrong one taken from another customer, and with a reformatted copy of itself.
+          </p>
+          <dl className="audit-facts">
+            <div>
+              <dt>Picked the real answer over a wrong one</dt>
+              <dd>{calibration.judge.degraded_caught} of {calibration.judge.degraded_pairs}</dd>
+            </div>
+            <div>
+              <dt>Picked the wrong answer</dt>
+              <dd>{calibration.judge.degraded_inverted} of {calibration.judge.degraded_pairs}</dd>
+            </div>
+            <div>
+              <dt>Called a reformatted copy a tie</dt>
+              <dd>{calibration.judge.control_ties} of {calibration.judge.control_pairs}</dd>
+            </div>
+            <div>
+              <dt>Both orderings agreed</dt>
+              <dd>{calibration.judge.orders_agreed} of {calibration.judge.asked_pairs}</dd>
+            </div>
+          </dl>
+        </div>
+      )}
+
       {blind.length > 0 && (
         <p className="blind">
           Known blind spot, reported rather than hidden: {blind.map((b) => b.description.toLowerCase()).join(", ")}.

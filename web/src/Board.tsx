@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { RunReport } from "./types";
+import type { RunReport, RunSummary } from "./types";
 import { DECISION, endpointOf, heldBecause, ratio, versionOf } from "./format";
 
 const GLYPHS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.×";
@@ -61,13 +61,21 @@ function Flaps({ text, width, delay, className = "" }: { text: string; width: nu
 
 export function Board({
   report,
+  runs,
   selected,
   onSelect,
 }: {
   report: RunReport;
+  runs: RunSummary[];
   selected: string;
   onSelect: (model: string) => void;
 }) {
+  const record = (m: string) => {
+    const seen = runs.map((r) => r.candidates[m]?.decision).filter(Boolean);
+    if (seen.length < 2) return "";
+    const same = seen.filter((d) => d === report.verdicts.find((v) => v.candidate_model === m)?.decision).length;
+    return `Same verdict in ${same} of ${seen.length} runs`;
+  };
   const costOf = (m: string) => report.metrics.find((x) => x.model === m && x.variant === "original")?.cost_ratio;
 
   return (
@@ -119,6 +127,7 @@ export function Board({
               </span>
               <span className="board-remark" role="cell">
                 {heldBecause(v.checks)}
+                {record(v.candidate_model) && <span className="board-record">{record(v.candidate_model)}</span>}
               </span>
             </button>
           );

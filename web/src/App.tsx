@@ -6,6 +6,7 @@ import { Evidence } from "./Evidence";
 import { Fixes } from "./Fixes";
 import { Conversations } from "./Conversations";
 import { Trust } from "./Trust";
+import { Stability } from "./Stability";
 
 const REPO = "https://github.com/demonjd2026-afk/spark-gate";
 const PR = `${REPO}/pull/1`;
@@ -84,6 +85,7 @@ export default function App() {
             <a href="#evidence">Evidence</a>
             <a href="#fixes">Fixes</a>
             <a href="#conversations">Conversations</a>
+            <a href="#stability">Stability</a>
             <a href="#trust">Trust</a>
             <a href="#how">How it works</a>
           </nav>
@@ -143,7 +145,7 @@ export default function App() {
 
         {report && index && (
           <>
-            <Board report={report} selected={selected} onSelect={selectCandidate} />
+            <Board report={report} runs={index.runs} selected={selected} onSelect={selectCandidate} />
             <Evidence report={report} selected={selected} />
             <Fixes report={report} selected={selected} onOpenTrace={openTraceAndScroll} />
             <Conversations
@@ -152,6 +154,10 @@ export default function App() {
               selected={selected}
               openTrace={openTrace}
               onOpenTrace={setOpenTrace}
+            />
+            <Stability
+              runs={index.runs}
+              maxLoss={report.verdicts[0]?.checks.find((c) => c.name === "quality loss rate")?.threshold ?? 0.1}
             />
             <Trust calibration={index.calibration} />
 

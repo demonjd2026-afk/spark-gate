@@ -15,7 +15,32 @@ for (const name of readdirSync(resultsDir).sort()) {
   const report = JSON.parse(readFileSync(join(resultsDir, name), "utf8"));
   if (!report.run_id || !report.verdicts) continue;
   writeFileSync(join(out, `run-${report.run_id}.json`), JSON.stringify(report));
-  runs.push({ run_id: report.run_id, created_at: report.created_at, baseline: report.baseline_model });
+
+  // A small per-run summary, so the site can compare verdicts across runs without
+  // downloading every full report.
+  const candidates = {};
+  for (const v of report.verdicts) {
+    const m = report.metrics.find((x) => x.model === v.candidate_model && x.variant === "original") ?? {};
+    const diffs = report.diffs.filter((d) => d.candidate_model === v.candidate_model && d.variant === "original");
+    // Counts use the same denominators as the gate (src/sparkgate/gate.py): every replayed conversation.
+    candidates[v.candidate_model] = {
+      decision: v.decision,
+      quality_loss_rate: m.quality_loss_rate ?? null,
+      tool_fidelity_rate: m.tool_fidelity_rate ?? null,
+      policy_pass_rate: m.policy_pass_rate ?? null,
+      cost_ratio: m.cost_ratio ?? null,
+      losses: diffs.filter((d) => d.quality === "baseline_better").length,
+      fidelity_ok: diffs.filter((d) => d.candidate_status === "ok" && d.tool_fidelity !== "sequence_changed").length,
+      traces: diffs.length,
+    };
+  }
+  runs.push({
+    run_id: report.run_id,
+    created_at: report.created_at,
+    baseline: report.baseline_model,
+    total_cost_usd: report.total_cost_usd,
+    candidates,
+  });
 }
 runs.sort((a, b) => b.created_at.localeCompare(a.created_at));
 

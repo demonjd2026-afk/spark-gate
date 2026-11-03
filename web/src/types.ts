@@ -120,11 +120,44 @@ export interface CalibrationOperator {
   caught_by: Record<string, number>;
 }
 
+export interface JudgeAudit {
+  model: string;
+  degraded_pairs: number;
+  degraded_caught: number;
+  degraded_inverted: number;
+  control_pairs: number;
+  control_ties: number;
+  asked_pairs: number;
+  orders_agreed: number;
+  not_judged: number;
+  cost_usd: number;
+}
+
 export interface Calibration {
   calibration_id: string;
   created_at: string;
   n_traces: number;
   operators: CalibrationOperator[];
+  judge: JudgeAudit | null;
+}
+
+export interface RunCandidateSummary {
+  decision: Decision;
+  quality_loss_rate: number | null;
+  tool_fidelity_rate: number | null;
+  policy_pass_rate: number | null;
+  cost_ratio: number | null;
+  losses: number;
+  fidelity_ok: number;
+  traces: number;
+}
+
+export interface RunSummary {
+  run_id: string;
+  created_at: string;
+  baseline: string;
+  total_cost_usd: number;
+  candidates: Record<string, RunCandidateSummary>;
 }
 
 export interface Conversation {
@@ -133,7 +166,7 @@ export interface Conversation {
 }
 
 export interface DataIndex {
-  runs: { run_id: string; created_at: string; baseline: string }[];
+  runs: RunSummary[];
   calibration: Calibration | null;
   conversations: Record<string, Conversation>;
 }
