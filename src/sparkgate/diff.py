@@ -185,6 +185,7 @@ def diff_replays(
         baseline_model=baseline.model,
         candidate_model=candidate.model,
         variant=candidate.variant,
+        repeat=candidate.repeat,
         candidate_status=candidate.status,
         tool_fidelity=td.fidelity,
         baseline_tools=[c.name for c in baseline.calls],

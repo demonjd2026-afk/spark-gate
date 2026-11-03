@@ -104,6 +104,11 @@ def run(
     strict: Annotated[
         bool, typer.Option("--strict", help="Fail instead of skipping candidates without keys")
     ] = False,
+    repeats: Annotated[
+        int | None,
+        typer.Option("--repeats", min=1, max=10,
+                     help="Replay every trace this many times and gate on the pooled rates"),
+    ] = None,
     verbose: Annotated[bool, typer.Option("--verbose", "-v")] = False,
 ) -> None:
     """Replay traces across models, diff behavior, and print a ship / don't-ship verdict."""
@@ -112,6 +117,8 @@ def run(
         console.print("[red]--fail-on must be dont_ship, not_ship or never[/]")
         raise typer.Exit(2)
     cfg = _load(config, candidate)
+    if repeats is not None:
+        cfg = cfg.model_copy(update={"runtime": cfg.runtime.model_copy(update={"repeats": repeats})})
     try:
         traces = load_traces(cfg.traces)
     except TraceFileError as exc:

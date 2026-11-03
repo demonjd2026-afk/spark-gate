@@ -54,4 +54,6 @@ runtime:
   max_output_tokens: 8192           # reasoning tokens count toward this; billed only when used
   request_timeout_s: 120
   max_retries: 5
-  budget_usd: 15                     # hard ceiling for one run
+  repeats: 3                         # replay every trace 3 times per model; the gate pools the
+                                     # rates, because one replay of 24 traces can flip a verdict
+  budget_usd: 25                     # hard ceiling for one run

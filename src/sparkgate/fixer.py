@@ -81,7 +81,9 @@ def group_patterns(diffs: list[TraceDiff]) -> list[RegressionPattern]:
         code = primary_code(d.regression_codes)
         if code is None:
             continue
-        groups.setdefault((d.candidate_model, code), []).append(d.trace_id)
+        ids = groups.setdefault((d.candidate_model, code), [])
+        if d.trace_id not in ids:  # the same trace may regress in several repeats
+            ids.append(d.trace_id)
     patterns = [
         RegressionPattern(
             id=_slug(f"{model}-{code}"),

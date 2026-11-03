@@ -145,3 +145,40 @@ async def test_policy_audit_flags_what_the_baseline_already_gets_wrong(cfg):
     policy_check = next(c for c in good_verdict.checks if c.name == "policy pass rate")
     assert not policy_check.passed  # ...but the absolute check still refuses to ship it
     assert "breaks a policy rule on 1 of 4" in to_markdown(report)
+
+
+async def test_repeats_pool_rates_and_pair_by_repeat(cfg):
+    """With repeats, every trace is replayed N times per model and the gate pools N×traces
+    diffs, each pairing a candidate replay with the baseline replay of the same repeat."""
+    cfg = cfg.model_copy(update={
+        "candidates": ["good"],
+        "runtime": cfg.runtime.model_copy(update={"repeats": 3}),
+    })
+    client = ScriptedClient(agent, judge=judge, fixer=fixer)
+    report = await GatePipeline(cfg, client).run(_traces(4))
+
+    assert report.repeats == 3
+    diffs = [d for d in report.diffs if d.candidate_model == "good"]
+    assert len(diffs) == 12 and sorted({d.repeat for d in diffs}) == [0, 1, 2]
+    assert sum(1 for r in report.replays if r.model == "base") == 12
+    assert report.noise_floor and report.noise_floor.traces == 12
+    m = next(x for x in report.metrics if x.model == "good" and x.variant == "original")
+    assert m.traces == 12 and m.tool_fidelity_rate == 1.0
+    assert report.verdicts[0].decision is GateDecision.SHIP
+    assert "× 3 replays" in to_markdown(report)
+
+
+async def test_repeats_fix_counts_a_trace_repaired_only_if_every_repeat_passes(cfg):
+    """`sloppy` skips the eligibility check on every replay; with the fix it never does, so
+    each trace is repaired in all repeats and the verdict is ship-with-fix."""
+    cfg = cfg.model_copy(update={
+        "candidates": ["sloppy"],
+        "runtime": cfg.runtime.model_copy(update={"repeats": 2}),
+    })
+    client = ScriptedClient(agent, judge=judge, fixer=fixer)
+    report = await GatePipeline(cfg, client).run(_traces(3))
+    v = report.verdicts[0]
+    assert v.decision is GateDecision.SHIP_WITH_FIX
+    pattern = next(p for p in report.patterns if p.suggested_fix)
+    assert sorted(pattern.trace_ids) == sorted(pattern.fix_resolved_ids)
+    assert len(pattern.trace_ids) == 3  # one entry per trace, not per repeat

@@ -155,6 +155,7 @@ class ReplayResult(BaseModel):
     trace_id: str
     model: str
     variant: str = "original"  # "original" or "patched"
+    repeat: int = 0  # which replay of this trace, when runtime.repeats > 1
     status: ReplayStatus = ReplayStatus.OK
     final_text: str = ""
     calls: list[ToolCall] = Field(default_factory=list)
@@ -186,6 +187,7 @@ class TraceDiff(BaseModel):
     baseline_model: str
     candidate_model: str
     variant: str = "original"
+    repeat: int = 0
 
     candidate_status: ReplayStatus = ReplayStatus.OK
     tool_fidelity: ToolFidelity
@@ -312,6 +314,7 @@ class RunReport(BaseModel):
     baseline_model: str
     candidate_models: list[str]
     n_traces: int
+    repeats: int = 1  # replays of every trace on every model; metrics pool over all of them
     inconclusive_trace_ids: list[str] = Field(default_factory=list)  # baseline replay failed
     skipped_candidates: dict[str, str] = Field(default_factory=dict)  # model -> why not run
     model_info: dict[str, ModelInfo] = Field(default_factory=dict)

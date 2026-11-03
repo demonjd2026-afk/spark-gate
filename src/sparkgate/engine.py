@@ -128,13 +128,14 @@ async def run_agent(
     executor: ToolExecutor,
     max_turns: int,
     variant: str = "original",
+    repeat: int = 0,
 ) -> ReplayResult:
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": system},
         {"role": "user", "content": user},
     ]
     tool_specs = [t.as_openai() for t in tools] or None
-    result = ReplayResult(trace_id=trace_id, model=model, variant=variant)
+    result = ReplayResult(trace_id=trace_id, model=model, variant=variant, repeat=repeat)
     usage = Usage()
 
     try:
@@ -194,6 +195,7 @@ async def replay_trace(
     max_turns: int,
     system_addendum: str | None = None,
     variant: str = "original",
+    repeat: int = 0,
 ) -> ReplayResult:
     system = trace.system if not system_addendum else f"{trace.system}\n\n{system_addendum}"
     return await run_agent(
@@ -206,4 +208,5 @@ async def replay_trace(
         executor=RecordedToolOracle(trace.tool_calls),
         max_turns=max_turns,
         variant=variant,
+        repeat=repeat,
     )

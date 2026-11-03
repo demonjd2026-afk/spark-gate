@@ -31,6 +31,8 @@ from sparkgate.schemas import (
 
 ProgressFn = Callable[[str, int, int], None]
 T = TypeVar("T")
+Key = tuple[str, int]  # (trace id, repeat)
+Replays = dict[Key, ReplayResult]
 
 
 def _noop(stage: str, done: int, total: int) -> None:  # pragma: no cover - trivial
@@ -76,34 +78,42 @@ class GatePipeline:
 
         return await asyncio.gather(*(wrap(c) for c in coros))
 
+    @property
+    def _repeats(self) -> range:
+        return range(self.cfg.runtime.repeats)
+
     async def _replay_all(
-        self, stage: str, traces: list[Trace], model: str, addendum: str | None, variant: str
-    ) -> dict[str, ReplayResult]:
+        self, stage: str, traces: list[Trace], model: str, addendum: str | None, variant: str,
+        keys: list[Key] | None = None,
+    ) -> Replays:
+        """Replay each trace once per repeat (or exactly the given (trace, repeat) keys)."""
+        by_id = {t.id: t for t in traces}
+        keys = keys if keys is not None else [(t.id, k) for t in traces for k in self._repeats]
         results = await self._tracked(
             stage,
             (
                 replay_trace(
                     self.client,
-                    t,
+                    by_id[tid],
                     model,
                     max_turns=self.cfg.runtime.max_tool_turns,
                     system_addendum=addendum,
                     variant=variant,
+                    repeat=k,
                 )
-                for t in traces
+                for tid, k in keys
             ),
         )
-        return {r.trace_id: r for r in results}
+        return {(r.trace_id, r.repeat): r for r in results}
 
     async def _diff_all(
-        self,
-        stage: str,
-        traces: list[Trace],
-        baseline: dict[str, ReplayResult],
-        candidate: dict[str, ReplayResult],
+        self, stage: str, traces: list[Trace], baseline: Replays, candidate: Replays,
     ) -> list[TraceDiff]:
-        async def one(t: Trace) -> TraceDiff:
-            b, c = baseline[t.id], candidate[t.id]
+        """Diff every candidate replay against the baseline replay with the same repeat."""
+        by_id = {t.id: t for t in traces}
+
+        async def one(key: Key) -> TraceDiff:
+            t, b, c = by_id[key[0]], baseline[key], candidate[key]
             d = diff_replays(t, b, c, self.cfg.gate.side_effect_tools)
             if self.judge and c.status is ReplayStatus.OK:
                 j = await self.judge.compare(t, b, c)
@@ -112,25 +122,32 @@ class GatePipeline:
                 d.regression_codes = regression_codes(d)
             return d
 
-        return await self._tracked(stage, (one(t) for t in traces))
+        keys = sorted(k for k in candidate if k in baseline and k[0] in by_id)
+        return await self._tracked(stage, (one(k) for k in keys))
 
     def _metrics(
-        self,
-        model: str,
-        variant: str,
-        diffs: list[TraceDiff],
-        baseline: dict[str, ReplayResult],
-        candidate: dict[str, ReplayResult],
+        self, model: str, variant: str, diffs: list[TraceDiff], baseline: Replays,
+        candidate: Replays,
     ) -> CandidateMetrics:
-        ids = [d.trace_id for d in diffs]
+        keys = [(d.trace_id, d.repeat) for d in diffs]
         return compute_metrics(
             model,
             variant,
             diffs,
-            [baseline[i] for i in ids],
-            [candidate[i] for i in ids],
+            [baseline[k] for k in keys],
+            [candidate[k] for k in keys],
             priced=self._priced(model),
         )
+
+    @staticmethod
+    def _worst_repeat(diffs: list[TraceDiff]) -> dict[str, TraceDiff]:
+        """One diff per trace for diagnosis: the regressed repeat if there is one."""
+        out: dict[str, TraceDiff] = {}
+        for d in diffs:
+            cur = out.get(d.trace_id)
+            if cur is None or (d.is_regression and not cur.is_regression):
+                out[d.trace_id] = d
+        return out
 
     def _priced(self, model: str) -> bool:
         return self.cfg.models[model].priced and self.cfg.models[self.cfg.baseline].priced
@@ -138,8 +155,7 @@ class GatePipeline:
     # ------------------------------------------------------------------ stages
 
     async def _candidate(
-        self, model: str, traces: list[Trace], baseline: dict[str, ReplayResult],
-        replay: dict[str, ReplayResult],
+        self, model: str, traces: list[Trace], baseline: Replays, replay: Replays,
     ) -> _CandidateOutcome:
         cfg = self.cfg
         diffs = await self._diff_all(f"judging {model}", traces, baseline, replay)
@@ -155,25 +171,33 @@ class GatePipeline:
             return out
 
         by_id = {t.id: t for t in traces}
-        diff_by_id = {d.trace_id: d for d in diffs}
+        # The fixer looks at one replay per trace: the repeat where the regression showed.
+        diff_by_id = self._worst_repeat(diffs)
+        base_by_id = {tid: baseline[(tid, d.repeat)] for tid, d in diff_by_id.items()}
+        cand_by_id = {tid: replay[(tid, d.repeat)] for tid, d in diff_by_id.items()}
         targets = fixable[: cfg.fixer.max_patterns]
         diagnosed = await self._tracked(
             f"diagnosing {model}",
-            (self.fixer.diagnose(p, by_id, baseline, replay, diff_by_id) for p in targets),
+            (self.fixer.diagnose(p, by_id, base_by_id, cand_by_id, diff_by_id)
+             for p in targets),
         )
 
-        # Re-test each fix on the traces it is meant to repair.
+        # Re-test each fix on the traces it is meant to repair, with the same repeats.
         for i, p in enumerate(diagnosed):
             if not p.suggested_fix:
                 continue
             affected = [by_id[tid] for tid in p.trace_ids]
+            keys = [(t.id, k) for t in affected for k in self._repeats if (t.id, k) in baseline]
             retest = await self._replay_all(
-                f"re-testing fix {i + 1}", affected, model, p.suggested_fix, f"fix:{p.id}"
+                f"re-testing fix {i + 1}", affected, model, p.suggested_fix, f"fix:{p.id}",
+                keys=keys,
             )
             retest_diffs = await self._diff_all(
                 f"judging fix {i + 1}", affected, baseline, retest
             )
-            resolved = sorted(d.trace_id for d in retest_diffs if not d.is_regression)
+            # A trace counts as repaired only if no repeat regresses after the fix.
+            still_bad = {d.trace_id for d in retest_diffs if d.is_regression}
+            resolved = sorted({d.trace_id for d in retest_diffs} - still_bad)
             diagnosed[i] = p.model_copy(
                 update={"fix_resolved_ids": resolved, "fix_accepted": bool(resolved)}
             )
@@ -205,33 +229,45 @@ class GatePipeline:
         replays = await self._tracked(
             "replaying",
             (
-                replay_trace(self.client, t, m, max_turns=cfg.runtime.max_tool_turns)
+                replay_trace(self.client, t, m, max_turns=cfg.runtime.max_tool_turns, repeat=k)
                 for m in models
                 for t in traces
+                for k in self._repeats
             ),
         )
-        by_model: dict[str, dict[str, ReplayResult]] = {m: {} for m in models}
+        by_model: dict[str, Replays] = {m: {} for m in models}
         for r in replays:
-            by_model[r.model][r.trace_id] = r
+            by_model[r.model][(r.trace_id, r.repeat)] = r
 
-        baseline = by_model[cfg.baseline]
-        inconclusive = sorted(tid for tid, r in baseline.items() if r.status is not ReplayStatus.OK)
+        # A (trace, repeat) pair is usable when its baseline replay finished; a trace is
+        # inconclusive when none of its baseline replays did.
+        all_base = by_model[cfg.baseline]
+        baseline = {k: r for k, r in all_base.items() if r.status is ReplayStatus.OK}
+        inconclusive = sorted(
+            t.id for t in traces if not any((t.id, k) in baseline for k in self._repeats)
+        )
         usable = [t for t in traces if t.id not in inconclusive]
+        by_id = {t.id: t for t in traces}
 
         noise = NoiseFloor(
             model=cfg.baseline,
-            traces=len(usable),
+            traces=len(baseline),
             tool_sequence_drift_rate=(
-                sum(sequence_drifted(t.tool_calls, baseline[t.id].calls) for t in usable)
-                / len(usable)
-                if usable
+                sum(sequence_drifted(by_id[tid].tool_calls, r.calls)
+                    for (tid, _), r in baseline.items())
+                / len(baseline)
+                if baseline
                 else 0.0
             ),
         )
+        first_base: dict[str, ReplayResult] = {}
+        for (tid, _), r in sorted(baseline.items()):
+            first_base.setdefault(tid, r)
 
         outcomes = await asyncio.gather(
             *(
-                self._candidate(m, usable, baseline, {t.id: by_model[m][t.id] for t in usable})
+                self._candidate(m, usable, baseline,
+                                {k: by_model[m][k] for k in baseline if k in by_model[m]})
                 for m in cfg.candidates
             )
         )
@@ -241,15 +277,16 @@ class GatePipeline:
             baseline_model=cfg.baseline,
             candidate_models=list(cfg.candidates),
             n_traces=len(traces),
+            repeats=cfg.runtime.repeats,
             inconclusive_trace_ids=inconclusive,
             noise_floor=noise,
-            baseline_policy=audit_baseline(cfg.baseline, usable, baseline),
+            baseline_policy=audit_baseline(cfg.baseline, usable, first_base),
             model_info={
                 m: ModelInfo(hosting=cfg.models[m].hosting, served_by=cfg.models[m].served_by,
                              wire_model=cfg.models[m].wire_model or m)
                 for m in models
             },
-            replays=list(baseline.values()),
+            replays=list(all_base.values()),
         )
         for o in outcomes:
             report.metrics += o.metrics

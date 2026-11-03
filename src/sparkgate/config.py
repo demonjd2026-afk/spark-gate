@@ -117,6 +117,10 @@ class RuntimeConfig(BaseModel):
     request_timeout_s: float = Field(default=120, gt=0, le=900)
     max_retries: int = Field(default=5, ge=0, le=10)
     budget_usd: float = Field(default=20.0, gt=0)
+    # Replay every trace this many times on every model and gate on the pooled rates.
+    # Reasoning models are not deterministic even at temperature 0, so one replay of a
+    # small suite can flip a verdict; several replays make the rates stable.
+    repeats: int = Field(default=1, ge=1, le=10)
     reasoning_effort: Literal["minimal", "low", "medium", "high", "xhigh"] | None = None
     # Name of the output-length parameter the endpoint accepts.
     max_tokens_param: Literal["max_tokens", "max_completion_tokens"] = "max_tokens"

@@ -54,8 +54,9 @@ def hosting_label(report: RunReport, model: str) -> str:
 def to_markdown(report: RunReport, *, max_patterns: int = 6) -> str:
     out: list[str] = ["## Spark Gate", ""]
     out.append(
-        f"Baseline **{md(report.baseline_model)}** · {report.n_traces} traces · "
-        f"run `{md(report.run_id)}` · spend ${report.total_cost_usd:.4f}"
+        f"Baseline **{md(report.baseline_model)}** · {report.n_traces} traces"
+        + (f" × {report.repeats} replays each, rates pooled" if report.repeats > 1 else "")
+        + f" · run `{md(report.run_id)}` · spend ${report.total_cost_usd:.4f}"
     )
     if report.noise_floor:
         out.append(
