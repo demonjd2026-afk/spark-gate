@@ -22,7 +22,7 @@ from sparkgate.schemas import (
 )
 
 PERCENT_CHECKS = frozenset(
-    {"tool-call fidelity", "schema validity", "quality loss rate", "policy pass rate"}
+    {"tool-call fidelity", "schema validity", "net quality loss", "policy pass rate"}
 )
 
 
@@ -86,6 +86,10 @@ def compute_metrics(
         ),
         quality_win_rate=sum(d.quality is QualityVerdict.CANDIDATE_BETTER for d in diffs) / n,
         quality_loss_rate=sum(d.quality is QualityVerdict.BASELINE_BETTER for d in diffs) / n,
+        quality_net_loss_rate=(
+            sum(d.quality is QualityVerdict.BASELINE_BETTER for d in diffs)
+            - sum(d.quality is QualityVerdict.CANDIDATE_BETTER for d in diffs)
+        ) / n,
         regressions=sum(d.is_regression for d in diffs),
     )
     m.latency_p50_ratio = _ratio(percentile(c_lat, 0.5), percentile(b_lat, 0.5)) or 1.0
@@ -95,8 +99,21 @@ def compute_metrics(
 
 
 def evaluate(
-    m: CandidateMetrics, t: GateThresholds, *, judged: bool, priced: bool
+    m: CandidateMetrics, t: GateThresholds, *, judged: bool, priced: bool,
+    noise_floor: float = 0.0,
 ) -> list[ThresholdCheck]:
+    """Check pooled metrics against the thresholds.
+
+    Two checks are measured against the models' own noise rather than against zero:
+
+    * Tool-call fidelity: the baseline itself re-runs with a different tool sequence on
+      `noise_floor` of its replays (temperature 0 is not deterministic). A candidate is
+      allowed that much drift on top of the configured margin, so the effective threshold
+      is `min_tool_fidelity - noise_floor`.
+    * Net quality loss: the judge picks a winner between near-equal answers about as often
+      in each direction. "Judged worse" minus "judged better" cancels that, so only a real
+      shift against the candidate counts.
+    """
     def check(name: str, direction: str, threshold: float | None, actual: float | None):
         if threshold is None:
             return None
@@ -111,11 +128,12 @@ def evaluate(
 
     checks = [
         check("run errors", "max", float(t.max_errors), float(m.errors)),
-        check("tool-call fidelity", "min", t.min_tool_fidelity, m.tool_fidelity_rate),
+        check("tool-call fidelity", "min", max(0.0, t.min_tool_fidelity - noise_floor),
+              m.tool_fidelity_rate),
         check("policy pass rate", "min", t.min_policy_pass, m.policy_pass_rate),
         check("schema validity", "min", t.min_schema_valid, m.schema_valid_rate),
-        check("quality loss rate", "max", t.max_quality_loss,
-              m.quality_loss_rate if judged else None),
+        check("net quality loss", "max", t.max_quality_loss,
+              m.quality_net_loss_rate if judged else None),
         check("p95 latency ratio", "max", t.max_latency_p95_ratio, m.latency_p95_ratio),
         check("cost ratio", "max", t.max_cost_ratio, m.cost_ratio if priced else None),
     ]

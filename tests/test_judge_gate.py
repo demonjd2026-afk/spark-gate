@@ -113,7 +113,7 @@ def test_unpriced_and_unjudged_checks_are_skipped_not_faked():
                         priced=False)
     checks = {c.name: c for c in evaluate(m, GateThresholds(), judged=False, priced=False)}
     assert checks["cost ratio"].actual is None and checks["cost ratio"].passed
-    assert checks["quality loss rate"].actual is None
+    assert checks["net quality loss"].actual is None
 
 
 def test_decide_ship_with_fix_only_when_patched_passes():
@@ -127,3 +127,39 @@ def test_decide_ship_with_fix_only_when_patched_passes():
     assert decide("c", bad).decision is GateDecision.DONT_SHIP
     assert decide("c", bad, good, "do X").decision is GateDecision.SHIP_WITH_FIX
     assert decide("c", bad, bad, "do X").decision is GateDecision.DONT_SHIP
+
+
+def test_net_quality_loss_cancels_symmetric_judge_noise():
+    """Three judged worse and three judged better net to zero: a coin-flipping judge must
+    not fail a candidate; a one-sided shift still does."""
+    even = [_diff(str(i), quality=QualityVerdict.BASELINE_BETTER) for i in range(3)] + [
+        _diff(str(i), quality=QualityVerdict.CANDIDATE_BETTER) for i in range(3, 6)
+    ] + [_diff(str(i)) for i in range(6, 10)]
+    reps = lambda m: [_r(m, str(i), 1, 1) for i in range(10)]
+    m = compute_metrics("c", "o", even, reps("b"), reps("c"), priced=True)
+    assert m.quality_loss_rate == pytest.approx(0.3)
+    assert m.quality_net_loss_rate == pytest.approx(0.0)
+    checks = {c.name: c for c in evaluate(m, GateThresholds(), judged=True, priced=True)}
+    assert checks["net quality loss"].passed
+
+    one_sided = [_diff(str(i), quality=QualityVerdict.BASELINE_BETTER) for i in range(3)] + [
+        _diff(str(i)) for i in range(3, 10)
+    ]
+    m2 = compute_metrics("c", "o", one_sided, reps("b"), reps("c"), priced=True)
+    assert m2.quality_net_loss_rate == pytest.approx(0.3)
+    checks2 = {c.name: c for c in evaluate(m2, GateThresholds(), judged=True, priced=True)}
+    assert not checks2["net quality loss"].passed
+
+
+def test_fidelity_threshold_allows_for_the_baseline_noise_floor():
+    """A candidate that drifts no more than the baseline drifts from itself is not a regression."""
+    diffs = [_diff("1", ToolFidelity.SEQUENCE_CHANGED)] + [_diff(str(i)) for i in range(2, 11)]
+    reps = lambda m: [_r(m, str(i), 1, 1) for i in range(1, 11)]
+    m = compute_metrics("c", "o", diffs, reps("b"), reps("c"), priced=True)
+    assert m.tool_fidelity_rate == pytest.approx(0.9)
+    strict = GateThresholds(min_tool_fidelity=0.95)
+    without = {c.name: c for c in evaluate(m, strict, judged=True, priced=True)}
+    assert not without["tool-call fidelity"].passed
+    with_noise = {c.name: c for c in evaluate(m, strict, judged=True, priced=True, noise_floor=0.08)}
+    assert with_noise["tool-call fidelity"].passed
+    assert with_noise["tool-call fidelity"].threshold == pytest.approx(0.87)

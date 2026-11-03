@@ -156,12 +156,13 @@ class GatePipeline:
 
     async def _candidate(
         self, model: str, traces: list[Trace], baseline: Replays, replay: Replays,
+        noise_floor: float = 0.0,
     ) -> _CandidateOutcome:
         cfg = self.cfg
         diffs = await self._diff_all(f"judging {model}", traces, baseline, replay)
         metrics = self._metrics(model, "original", diffs, baseline, replay)
         checks = evaluate(metrics, cfg.gate, judged=self.judge is not None,
-                          priced=self._priced(model))
+                          priced=self._priced(model), noise_floor=noise_floor)
         verdict = decide(model, checks)
         patterns = group_patterns(diffs)
         out = _CandidateOutcome([metrics], diffs, list(replay.values()), patterns, verdict)
@@ -216,7 +217,7 @@ class GatePipeline:
             p_diffs = await self._diff_all(f"judging patched {model}", traces, baseline, patched)
             p_metrics = self._metrics(model, "patched", p_diffs, baseline, patched)
             p_checks = evaluate(p_metrics, cfg.gate, judged=self.judge is not None,
-                                priced=self._priced(model))
+                                priced=self._priced(model), noise_floor=noise_floor)
             out.verdict = decide(model, checks, p_checks, addendum)
             out.metrics.append(p_metrics)
             out.diffs += p_diffs
@@ -267,7 +268,8 @@ class GatePipeline:
         outcomes = await asyncio.gather(
             *(
                 self._candidate(m, usable, baseline,
-                                {k: by_model[m][k] for k in baseline if k in by_model[m]})
+                                {k: by_model[m][k] for k in baseline if k in by_model[m]},
+                                noise_floor=noise.tool_sequence_drift_rate)
                 for m in cfg.candidates
             )
         )
@@ -296,3 +298,45 @@ class GatePipeline:
             report.verdicts.append(o.verdict)
         report.total_cost_usd = round(self.client.spent_usd, 6)
         return report
+
+
+def regate(report: RunReport, cfg: GateConfig) -> RunReport:
+    """Recompute metrics, checks and verdicts of a stored report under `cfg.gate`, from the
+    diffs and replays it already holds. No model calls. The run id and data are kept; only the
+    decision layer changes, so thresholds can be revisited without paying for a new run."""
+    priced = {m: cfg.models[m].priced and cfg.models[cfg.baseline].priced
+              for m in report.candidate_models if m in cfg.models}
+    judged = cfg.judge.enabled
+    noise = report.noise_floor.tool_sequence_drift_rate if report.noise_floor else 0.0
+    by_key = {(r.model, r.variant, r.trace_id, r.repeat): r for r in report.replays}
+    base = {(r.trace_id, r.repeat): r for r in report.replays
+            if r.model == report.baseline_model and r.variant == "original"}
+
+    metrics: list[CandidateMetrics] = []
+    verdicts: list[Verdict] = []
+    for model in report.candidate_models:
+        per_variant: dict[str, list[TraceDiff]] = {}
+        for d in report.diffs:
+            if d.candidate_model == model and d.variant in ("original", "patched"):
+                per_variant.setdefault(d.variant, []).append(d)
+        checks_by_variant: dict[str, list] = {}
+        for variant, diffs in per_variant.items():
+            keys = [(d.trace_id, d.repeat) for d in diffs]
+            m = compute_metrics(
+                model, variant, diffs,
+                [base[k] for k in keys],
+                [by_key[(model, variant, *k)] for k in keys],
+                priced=priced.get(model, False),
+            )
+            metrics.append(m)
+            checks_by_variant[variant] = evaluate(
+                m, cfg.gate, judged=judged, priced=priced.get(model, False), noise_floor=noise
+            )
+        old = next((v for v in report.verdicts if v.candidate_model == model), None)
+        verdicts.append(decide(
+            model,
+            checks_by_variant.get("original", []),
+            checks_by_variant.get("patched"),
+            old.prompt_addendum if old else None,
+        ))
+    return report.model_copy(update={"metrics": metrics, "verdicts": verdicts})

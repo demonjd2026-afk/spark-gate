@@ -21,6 +21,7 @@ from sparkgate.calibrate import calibrate_judge, run_mutations
 from sparkgate.config import ConfigError, GateConfig, load_config
 from sparkgate.judge import PairwiseJudge
 from sparkgate.pipeline import GatePipeline
+from sparkgate.pipeline import regate as regate_report
 from sparkgate.providers import ModelRouter
 from sparkgate.report import calibration_markdown, to_markdown
 from sparkgate.schemas import GateDecision, RunReport
@@ -69,8 +70,8 @@ async def _execute(cfg: GateConfig, traces) -> RunReport:
 
 def _verdict_table(report: RunReport) -> Table:
     table = Table(title=f"Spark Gate · baseline {report.baseline_model}")
-    for col in ("candidate", "verdict", "policy", "fidelity", "schema", "quality loss", "p95 lat",
-                "cost"):
+    for col in ("candidate", "verdict", "policy", "fidelity", "schema", "net quality loss",
+                "p95 lat", "cost"):
         table.add_column(col)
     style = {"ship": "green", "ship_with_fix": "yellow", "dont_ship": "red"}
     originals = {m.model: m for m in report.metrics if m.variant == "original"}
@@ -82,7 +83,7 @@ def _verdict_table(report: RunReport) -> Table:
             "-" if m.policy_pass_rate is None else f"{m.policy_pass_rate:.0%}",
             f"{m.tool_fidelity_rate:.0%}",
             "-" if m.schema_valid_rate is None else f"{m.schema_valid_rate:.0%}",
-            f"{m.quality_loss_rate:.0%}",
+            f"{m.quality_net_loss_rate:+.0%}",
             f"{m.latency_p95_ratio:.2f}x",
             f"{m.cost_ratio:.2f}x",
         )
@@ -271,6 +272,32 @@ def report(
         console.print(f"[red]{exc}[/]")
         raise typer.Exit(2) from exc
     typer.echo(to_markdown(rep))
+
+
+@app.command()
+def regate(
+    run_id: Annotated[str, typer.Argument(help="Run id, or 'latest'")] = "latest",
+    config: ConfigOpt = Path("sparkgate.yaml"),
+    write: Annotated[bool, typer.Option("--write", help="Overwrite the stored report")] = False,
+) -> None:
+    """Re-apply the gate thresholds in the config to a stored run, without any model calls.
+
+    Useful after changing thresholds: the replays and judge results are kept, only the
+    checks and verdicts are recomputed.
+    """
+    cfg = _load(config, None)
+    store = RunStore(cfg.store_dir)
+    try:
+        rep = store.load(run_id)
+    except (FileNotFoundError, ValueError) as exc:
+        console.print(f"[red]{exc}[/]")
+        raise typer.Exit(2) from exc
+    new = regate_report(rep, cfg)
+    console.print(_verdict_table(new))
+    if write:
+        path = store.reports_dir / f"{new.run_id}.json"
+        path.write_text(new.model_dump_json(), encoding="utf-8")
+        console.print(f"updated: {path}")
 
 
 @app.command()

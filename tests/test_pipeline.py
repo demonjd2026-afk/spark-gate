@@ -91,7 +91,7 @@ async def test_full_run_ship_and_ship_with_fix(cfg, tmp_path):
     assert sloppy.decision is GateDecision.SHIP_WITH_FIX
     assert sloppy.prompt_addendum == FIX
     assert not {c.name for c in sloppy.checks if not c.passed} - {
-        "tool-call fidelity", "schema validity", "quality loss rate"}
+        "tool-call fidelity", "schema validity", "net quality loss"}
 
     pat = next(p for p in report.patterns if p.candidate_model == "sloppy")
     assert pat.code == "schema_invalid"  # schema outranks the dropped tool

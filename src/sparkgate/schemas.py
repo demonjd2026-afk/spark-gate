@@ -255,6 +255,8 @@ class CandidateMetrics(BaseModel):
     policy_pass_rate: float | None = None
     quality_win_rate: float = 0.0
     quality_loss_rate: float = 0.0
+    # worse minus better: a judge that flips a coin on near-equal answers nets to zero
+    quality_net_loss_rate: float = 0.0
     latency_p50_ratio: float = 1.0
     latency_p95_ratio: float = 1.0
     cost_ratio: float = 1.0
