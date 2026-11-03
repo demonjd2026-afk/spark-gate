@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type { RunReport } from "./types";
 import { checkValue, endpointOf, versionOf, DECISION } from "./format";
 
@@ -97,14 +98,33 @@ export function Fixes({
             );
           })}
 
-          {verdict.prompt_addendum && (
-            <div className="addendum">
-              <h3>Proposed prompt addition</h3>
-              <pre>{verdict.prompt_addendum}</pre>
-            </div>
-          )}
+          {verdict.prompt_addendum && <Addendum text={verdict.prompt_addendum} />}
         </div>
       </div>
     </section>
+  );
+}
+
+function Addendum({ text }: { text: string }) {
+  const [state, setState] = useState<"idle" | "done" | "failed">("idle");
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setState("done");
+    } catch {
+      setState("failed");
+    }
+    window.setTimeout(() => setState("idle"), 1800);
+  };
+  return (
+    <div className="addendum">
+      <div className="addendum-top">
+        <h3>Proposed prompt addition</h3>
+        <button type="button" className="copy" onClick={copy} aria-live="polite">
+          {state === "done" ? "Copied" : state === "failed" ? "Select and copy" : "Copy"}
+        </button>
+      </div>
+      <pre>{text}</pre>
+    </div>
   );
 }

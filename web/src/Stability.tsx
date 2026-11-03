@@ -7,15 +7,21 @@ export function Stability({ runs, maxLoss }: { runs: RunSummary[]; maxLoss: numb
   const ordered = [...runs].sort((a, b) => a.created_at.localeCompare(b.created_at));
   const models = Object.keys(ordered[ordered.length - 1].candidates);
   const spend = ordered.reduce((s, r) => s + r.total_cost_usd, 0);
+  const replays = ordered.reduce((s, r) => s + (r.repeats || 1), 0);
+  const singles = ordered.filter((r) => (r.repeats || 1) === 1).length;
 
   return (
     <section id="stability" className="section" aria-labelledby="stab-title">
       <header className="section-head">
         <h2 id="stab-title">Is the verdict stable, or just noise?</h2>
         <p>
-          24 conversations is a small sample, so one or two answers can move a rate by several points. The whole
-          suite was run {ordered.length} separate times. A verdict only means something if it holds across runs, and
-          the pooled range shows how sure each number is.
+          Reasoning models are not deterministic even at temperature 0, and 24 conversations is a small sample: one
+          or two answers move a rate by several points. The suite was run {ordered.length} separate times
+          {singles > 0 && singles < ordered.length
+            ? `, ${singles} with a single replay per conversation and ${ordered.length - singles} with several`
+            : ""}
+          , {replays} replays of every conversation in all. Single replays disagreed with each other, which is why the
+          gate now pools several replays before it decides. The last column shows the range the evidence supports.
         </p>
       </header>
 
@@ -28,7 +34,10 @@ export function Stability({ runs, maxLoss }: { runs: RunSummary[]; maxLoss: numb
               {ordered.map((r, i) => (
                 <th scope="col" key={r.run_id}>
                   Run {i + 1}
-                  <span className="stab-date">{prettyDate(r.created_at)}</span>
+                  <span className="stab-date">
+                    {prettyDate(r.created_at)}
+                    {r.repeats > 1 ? ` · ${r.repeats} replays each` : ""}
+                  </span>
                 </th>
               ))}
               <th scope="col">Across all runs</th>

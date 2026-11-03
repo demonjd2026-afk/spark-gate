@@ -76,10 +76,12 @@ export function Board({
     const same = seen.filter((d) => d === report.verdicts.find((v) => v.candidate_model === m)?.decision).length;
     return `Same verdict in ${same} of ${seen.length} runs`;
   };
+  // Status tiles are only as wide as the longest verdict word on this board.
+  const statusTiles = Math.max(4, ...report.verdicts.map((v) => DECISION[v.decision].word.length));
   const costOf = (m: string) => report.metrics.find((x) => x.model === m && x.variant === "original")?.cost_ratio;
 
   return (
-    <section className="board" aria-labelledby="board-title">
+    <section className="board" aria-labelledby="board-title" style={{ ["--status-tiles" as string]: statusTiles }}>
       <div className="board-head">
         <h2 id="board-title" className="board-title">
           Departures from {report.baseline_model}
@@ -107,10 +109,10 @@ export function Board({
               onClick={() => onSelect(v.candidate_model)}
               aria-pressed={isSel}
             >
-              <span role="cell">
+              <span role="cell" className="c-version">
                 <Flaps text={`Spark ${versionOf(v.candidate_model)}`} width={9} delay={150 + i * 220} />
               </span>
-              <span role="cell">
+              <span role="cell" className="c-endpoint">
                 <Flaps
                   text={endpointOf(v.candidate_model).replace(" endpoint", "")}
                   width={11}
@@ -118,12 +120,12 @@ export function Board({
                   className="flaps-dim"
                 />
               </span>
-              <span role="cell">
+              <span role="cell" className="c-cost">
                 <Flaps text={ratio(costOf(v.candidate_model))} width={5} delay={350 + i * 220} />
               </span>
               <span role="cell" className="status-cell">
                 <span className={`lamp lamp-${d.tone}`} aria-hidden="true" />
-                <Flaps text={d.word} width={8} delay={450 + i * 220} className={`flaps-${d.tone}`} />
+                <Flaps text={d.word} width={statusTiles} delay={450 + i * 220} className={`flaps-${d.tone}`} />
               </span>
               <span className="board-remark" role="cell">
                 {heldBecause(v.checks)}

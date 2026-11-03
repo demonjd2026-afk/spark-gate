@@ -38,6 +38,7 @@ for (const name of readdirSync(resultsDir).sort()) {
     run_id: report.run_id,
     created_at: report.created_at,
     baseline: report.baseline_model,
+    repeats: report.repeats ?? 1,
     total_cost_usd: report.total_cost_usd,
     candidates,
   });

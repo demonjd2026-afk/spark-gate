@@ -97,26 +97,37 @@ export function Conversations({
   openTrace: string;
   onOpenTrace: (id: string) => void;
 }) {
-  const diffs = useMemo(() => {
+  const rank: Record<Outcome, number> = { worse: 0, changed: 1, better: 2, same: 3 };
+  const repeats = Math.max(1, report.repeats ?? 1);
+
+  // One diff per conversation: the worst of its replays, so a regression in any replay shows.
+  const { diffs, perTrace } = useMemo(() => {
     const m = new Map<string, Diff>();
+    const all = new Map<string, Diff[]>();
     report.diffs
       .filter((d) => d.candidate_model === selected && d.variant === "original")
-      .forEach((d) => m.set(d.trace_id, d));
-    return m;
+      .forEach((d) => {
+        all.set(d.trace_id, [...(all.get(d.trace_id) ?? []), d]);
+        const cur = m.get(d.trace_id);
+        if (!cur || rank[outcomeOf(d)] < rank[outcomeOf(cur)]) m.set(d.trace_id, d);
+      });
+    return { diffs: m, perTrace: all };
   }, [report, selected]);
 
-  const replay = (trace: string, model: string) =>
-    report.replays.find((r) => r.trace_id === trace && r.model === model && r.variant === "original");
+  const replay = (trace: string, model: string, repeat: number) =>
+    report.replays.find(
+      (r) => r.trace_id === trace && r.model === model && r.variant === "original" && (r.repeat ?? 0) === repeat,
+    );
 
   const ids = useMemo(() => {
     const all = Array.from(new Set(report.diffs.map((d) => d.trace_id)));
-    const rank: Record<Outcome, number> = { worse: 0, changed: 1, better: 2, same: 3 };
     return all.sort((a, b) => rank[outcomeOf(diffs.get(a))] - rank[outcomeOf(diffs.get(b))] || a.localeCompare(b));
   }, [report, diffs]);
 
   const current = ids.includes(openTrace) ? openTrace : ids[0];
   const d = diffs.get(current);
   const conv = conversations[current];
+  const worseIn = (perTrace.get(current) ?? []).filter((x) => outcomeOf(x) === "worse").length;
   const changedTools = new Set([...(d?.missing_tools ?? []), ...(d?.extra_tools ?? [])]);
   const counts = ids.reduce(
     (acc, id) => ({ ...acc, [outcomeOf(diffs.get(id))]: acc[outcomeOf(diffs.get(id))] + 1 }),
@@ -159,7 +170,10 @@ export function Conversations({
         <article className="conv-detail" aria-live="polite">
           <div className="conv-top">
             <h3>{current}</h3>
-            <span className={`outcome outcome-${outcomeOf(d)}`}>{OUTCOME_TEXT[outcomeOf(d)]}</span>
+            <span className={`outcome outcome-${outcomeOf(d)}`}>
+              {OUTCOME_TEXT[outcomeOf(d)]}
+              {repeats > 1 && outcomeOf(d) === "worse" ? ` in ${worseIn} of ${repeats} replays` : ""}
+            </span>
           </div>
           {conv && <blockquote className="customer">{conv.user}</blockquote>}
 
@@ -181,8 +195,16 @@ export function Conversations({
           )}
 
           <div className="runs">
-            <RunColumn title={`Today: ${report.baseline_model}`} replay={replay(current, report.baseline_model)} highlight={new Set()} />
-            <RunColumn title={`Candidate: ${selected}`} replay={replay(current, selected)} highlight={changedTools} />
+            <RunColumn
+              title={`Today: ${report.baseline_model}${repeats > 1 ? ` (replay ${(d?.repeat ?? 0) + 1})` : ""}`}
+              replay={replay(current, report.baseline_model, d?.repeat ?? 0)}
+              highlight={new Set()}
+            />
+            <RunColumn
+              title={`Candidate: ${selected}${repeats > 1 ? ` (replay ${(d?.repeat ?? 0) + 1})` : ""}`}
+              replay={replay(current, selected, d?.repeat ?? 0)}
+              highlight={changedTools}
+            />
           </div>
 
           {d && d.quality !== "not_judged" && (

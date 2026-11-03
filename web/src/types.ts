@@ -53,6 +53,7 @@ export interface Diff {
   trace_id: string;
   candidate_model: string;
   variant: "original" | "patched";
+  repeat: number;
   candidate_status: string;
   tool_fidelity: Fidelity;
   baseline_tools: string[];
@@ -87,6 +88,7 @@ export interface Replay {
   trace_id: string;
   model: string;
   variant: string;
+  repeat: number;
   status: string;
   final_text: string;
   calls: ToolCall[];
@@ -101,6 +103,7 @@ export interface RunReport {
   baseline_model: string;
   candidate_models: string[];
   n_traces: number;
+  repeats: number;
   noise_floor: { model: string; traces: number; tool_sequence_drift_rate: number } | null;
   baseline_policy: { model: string; traces_checked: number; pass_rate: number; failures: Record<string, string[]> } | null;
   metrics: Metrics[];
@@ -156,6 +159,7 @@ export interface RunSummary {
   run_id: string;
   created_at: string;
   baseline: string;
+  repeats: number;
   total_cost_usd: number;
   candidates: Record<string, RunCandidateSummary>;
 }

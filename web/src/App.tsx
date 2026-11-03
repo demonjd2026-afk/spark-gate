@@ -22,12 +22,15 @@ const STEPS = [
   ["Re-test", "The fix is replayed on every conversation. It only counts if the whole suite passes."],
 ] as const;
 
+/** A boom barrier: post, lamp, and a lowered striped arm. */
 function Mark() {
   return (
     <svg className="mark" viewBox="0 0 32 32" aria-hidden="true">
-      <rect x="3" y="5" width="4" height="22" rx="1" />
-      <rect x="25" y="5" width="4" height="22" rx="1" />
-      <rect className="mark-bar" x="7" y="13" width="18" height="5" rx="1" />
+      <rect className="mark-post" x="4" y="9" width="6" height="20" rx="1.5" />
+      <circle className="mark-lamp" cx="7" cy="5" r="3" />
+      <rect className="mark-arm" x="9" y="15" width="20" height="5" rx="1.2" />
+      <rect className="mark-stripe" x="14" y="15" width="4" height="5" />
+      <rect className="mark-stripe" x="22" y="15" width="4" height="5" />
     </svg>
   );
 }
@@ -85,7 +88,7 @@ export default function App() {
             <a href="#evidence">Evidence</a>
             <a href="#fixes">Fixes</a>
             <a href="#conversations">Conversations</a>
-            <a href="#stability">Stability</a>
+            {index && index.runs.length > 1 && <a href="#stability">Stability</a>}
             <a href="#trust">Trust</a>
             <a href="#how">How it works</a>
           </nav>
@@ -123,7 +126,13 @@ export default function App() {
             <dl className="hero-facts">
               <div><dt>Agent under test</dt><dd>Outdoor-gear support agent with 5 tools</dd></div>
               <div><dt>Running today on</dt><dd>{report.baseline_model}</dd></div>
-              <div><dt>Conversations replayed</dt><dd>{report.n_traces} per candidate</dd></div>
+              <div>
+                <dt>Conversations replayed</dt>
+                <dd>
+                  {report.n_traces} per candidate
+                  {(report.repeats ?? 1) > 1 ? `, ${report.repeats} times each` : ""}
+                </dd>
+              </div>
               <div><dt>Cost of this run</dt><dd>{usd(report.total_cost_usd)}</dd></div>
               {report.noise_floor && (
                 <div>

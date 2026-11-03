@@ -127,7 +127,9 @@ function TradeoffChart({ report, selected }: { report: RunReport; selected: stri
           return (
             <g key={p.model} className={`chart-point tone-${tone}${isSel ? " is-selected" : ""}`}>
               {isSel && <circle className="chart-halo" cx={sx(p.x)} cy={sy(p.y)} r={14} />}
-              <circle cx={sx(p.x)} cy={sy(p.y)} r={7} />
+              <circle cx={sx(p.x)} cy={sy(p.y)} r={7}>
+                <title>{`${p.model}: ${ratio(p.x)} the cost of today, judged worse on ${pct(p.y)} of conversations`}</title>
+              </circle>
               <text x={sx(p.x) + (right ? 12 : -12)} y={sy(p.y) + 4} textAnchor={right ? "start" : "end"}>
                 Spark {versionOf(p.model)}{p.model.endsWith("-contributor") ? " contributor" : ""}
               </text>
@@ -149,8 +151,12 @@ export function Evidence({ report, selected }: { report: RunReport; selected: st
       <header className="section-head">
         <h2 id="evidence-title">The evidence</h2>
         <p>
-          Each candidate replayed the same {report.n_traces} recorded conversations. Tool answers came from the
-          recording, so every model saw the same orders, the same refund rules and the same customers.
+          Each candidate replayed the same {report.n_traces} recorded conversations
+          {(report.repeats ?? 1) > 1
+            ? `, ${report.repeats} times each, and every rate below pools all ${report.n_traces * report.repeats} replays`
+            : ""}
+          . Tool answers came from the recording, so every model saw the same orders, the same refund rules and
+          the same customers.
         </p>
       </header>
       <div className="evidence-grid">
