@@ -1,12 +1,10 @@
-# Runs Spark Gate when the agent, its prompt, its traces or the gate config change.
+# Runs Spark Gate on every pull request. The paid replay only runs when the agent, its
+# prompt, its traces or the gate config change; otherwise the check passes at once, so it
+# can be a required check without holding up unrelated pull requests.
 name: spark-gate
 
 on:
   pull_request:
-    paths:
-      - "sparkgate.yaml"
-      - "traces/**"
-      - "demo/support_agent/**"
 
 permissions:
   contents: read
@@ -26,7 +24,26 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: ./
+          fetch-depth: 0
+
+      - name: Check whether the agent changed
+        id: changes
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          changed=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA" -- \
+            sparkgate.yaml 'traces/' 'demo/support_agent/' | head -n 50)
+          if [[ -n "$changed" ]]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            printf 'Agent files changed:\n%s\n' "$changed"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "No agent, trace or gate config changes; nothing to gate." | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - if: steps.changes.outputs.run == 'true'
+        uses: ./
         env:
           META_API_KEY: ${{ secrets.META_API_KEY }}
         with:
