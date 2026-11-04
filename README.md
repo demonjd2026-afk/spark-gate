@@ -10,6 +10,7 @@ A CI safety gate for Muse Spark model upgrades: replay your agent's real convers
 <p align="center">
   <a href="https://demonjd2026-afk.github.io/spark-gate/"><strong>Live dashboard</strong></a> ·
   <a href="https://github.com/demonjd2026-afk/spark-gate/pull/1"><strong>Blocked pull request</strong></a> ·
+  <a href="https://youtu.be/If_7ALm4S4k"><strong>Demo video</strong></a> ·
   <a href="#quickstart"><strong>Quickstart</strong></a>
 </p>
 
@@ -26,9 +27,17 @@ Built by [Jayanth Dolai](https://www.linkedin.com/in/jayanth-dolai-7b115213a/) f
 All code in this repository was written during the hackathon's building period
 (Oct 26 – Nov 4, 2026); the commit history shows when each part landed.
 
+## Demo video
+
+[![Watch the 3-minute demo on YouTube](web/public/og.png)](https://youtu.be/If_7ALm4S4k)
+
+**[▶ Watch on YouTube (2:59)](https://youtu.be/If_7ALm4S4k)** — the problem, the departure board, why Spark 1.3 was held, the auto-drafted fix, stability and trust, and the GitHub Action blocking a real pull request.
+
 ## Contents
 
+- [Demo video](#demo-video)
 - [At a glance](#at-a-glance)
+- [Architecture](#architecture)
 - [Where Meta's models are used](#where-metas-models-are-used)
 - [The problem](#the-problem)
 - [Results from real runs](#results-from-real-runs)
@@ -55,6 +64,19 @@ All code in this repository was written during the hackathon's building period
 | **Self-diagnosis** | Muse Spark 1.3 groups regressions, explains them, drafts a prompt fix, and the fix is re-tested on the whole suite before it counts |
 | **Self-test** | 150 seeded faults caught 100%, 0% false alarms; judge audit 24/24 · 12/12 · 36/36; the gate reports its own noise floor |
 | **Stack** | Python 3.11 (async router, DuckDB, JSON Schema), GitHub Action, React + Vite dashboard on GitHub Pages, 79 offline tests |
+
+## Architecture
+
+![Spark Gate architecture](docs/architecture.png)
+
+Left to right: recorded traces go into the replay engine, which runs every conversation on
+the baseline and each candidate (three times each) with tool results served from the
+recording; the diff, policy and judge stages measure what changed; the gate applies your
+thresholds, asks Muse Spark to diagnose and draft a fix, re-tests the fix on the whole
+suite, and issues the verdict; the GitHub Action and the dashboard are where the verdict
+lands. Every model call, baseline, candidates, judge and fixer, goes through the Meta Model
+API. The flowchart under [How it works](#how-it-works) shows the same pipeline as a
+decision flow, stage by stage.
 
 ## Where Meta's models are used
 
