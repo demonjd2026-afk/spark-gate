@@ -75,8 +75,8 @@ recording; the diff, policy and judge stages measure what changed; the gate appl
 thresholds, asks Muse Spark to diagnose and draft a fix, re-tests the fix on the whole
 suite, and issues the verdict; the GitHub Action and the dashboard are where the verdict
 lands. Every model call, baseline, candidates, judge and fixer, goes through the Meta Model
-API. The flowchart under [How it works](#how-it-works) shows the same pipeline as a
-decision flow, stage by stage.
+API. [How it works](#how-it-works) walks the same pipeline stage by stage, with the
+design decision behind each one.
 
 ## Where Meta's models are used
 
@@ -141,25 +141,9 @@ and the judge audit scored 24/24, 12/12 and 36/36 (see below).
 
 ## How it works
 
-```mermaid
-flowchart LR
-    A[Recorded traces<br/>prompt · tools · tool results · answer] --> R
-    subgraph R[Replay]
-      direction TB
-      B[baseline model] 
-      C[candidate models]
-    end
-    R -->|tool results served<br/>from the recording| D[Behavioral diff<br/>tools · args · schema · latency · cost]
-    D --> J[Pairwise judge<br/>position-swapped]
-    J --> G{Gate thresholds}
-    G -->|fail| P[Group regressions<br/>by primary code]
-    P --> F[Muse Spark diagnoses<br/>and proposes a prompt addendum]
-    F --> T[Re-test fix on affected traces,<br/>then all traces together]
-    T --> G2{Gate again}
-    G -->|pass| S[SHIP]
-    G2 -->|pass| SF[SHIP WITH FIX]
-    G2 -->|fail| N[DON'T SHIP]
-```
+The [architecture diagram](#architecture) shows the components. This table walks the
+same pipeline stage by stage, with the design decision behind each one and the module
+that implements it, so a reviewer can go straight from a claim to the code.
 
 | Stage | What it does | Why it is built this way |
 |---|---|---|
