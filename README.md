@@ -1,16 +1,60 @@
-# Spark Gate
+<p align="center">
+  <img src="web/public/og.png" alt="Spark Gate" width="720">
+</p>
 
-**Live dashboard: [demonjd2026-afk.github.io/spark-gate](https://demonjd2026-afk.github.io/spark-gate/)** · Example blocked upgrade: [pull request #1](https://github.com/demonjd2026-afk/spark-gate/pull/1)
+<h1 align="center">Spark Gate</h1>
 
-**A CI safety gate for model upgrades.** Spark Gate takes an agent's real traces,
-replays them on other Muse Spark versions, measures what actually changed, asks Muse
-Spark to diagnose and fix each regression, re-tests the fix, and returns a verdict:
-**ship**, **ship with fix**, or **don't ship**. A GitHub Action blocks the pull request
-when the answer is no.
+<p align="center"><strong>Know before you upgrade.</strong><br>
+A CI safety gate for Muse Spark model upgrades: replay your agent's real conversations on the next model version or the cheaper endpoint, measure exactly what changed, and block the pull request when it isn't safe.</p>
 
-Built for the Meta Global AI Developer Hackathon (Indie track, *Push the Frontier*).
+<p align="center">
+  <a href="https://demonjd2026-afk.github.io/spark-gate/"><strong>Live dashboard</strong></a> ·
+  <a href="https://github.com/demonjd2026-afk/spark-gate/pull/1"><strong>Blocked pull request</strong></a> ·
+  <a href="#quickstart"><strong>Quickstart</strong></a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/demonjd2026-afk/spark-gate/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/demonjd2026-afk/spark-gate/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="https://github.com/demonjd2026-afk/spark-gate/actions/workflows/pages.yml"><img alt="Dashboard" src="https://github.com/demonjd2026-afk/spark-gate/actions/workflows/pages.yml/badge.svg"></a>
+  <img alt="Python 3.11+" src="https://img.shields.io/badge/python-3.11%2B-blue">
+  <img alt="Models: Muse Spark via Meta Model API" src="https://img.shields.io/badge/models-Muse%20Spark%20%C2%B7%20Meta%20Model%20API-0866FF">
+  <a href="LICENSE"><img alt="MIT" src="https://img.shields.io/badge/license-MIT-green"></a>
+</p>
+
+Built by [Jayanth Dolai](https://www.linkedin.com/in/jayanth-dolai-7b115213a/) for the
+**Meta Global AI Developer Hackathon** (Indie developer track, *Build for Your World*).
 All code in this repository was written during the hackathon's building period
 (Oct 26 – Nov 4, 2026); the commit history shows when each part landed.
+
+## Contents
+
+- [At a glance](#at-a-glance)
+- [Where Meta's models are used](#where-metas-models-are-used)
+- [The problem](#the-problem)
+- [Results from real runs](#results-from-real-runs)
+- [How it works](#how-it-works)
+- [Quickstart](#quickstart)
+- [The demo agent](#the-demo-agent)
+- [Can you trust the gate?](#can-you-trust-the-gate-sparkgate-calibrate)
+- [Configuration](#configuration)
+- [GitHub Action](#github-action)
+- [Security](#security)
+- [Project layout](#project-layout)
+- [Tests](#tests)
+- [What's next](#whats-next)
+- [Limitations](#limitations)
+
+## At a glance
+
+| | |
+|---|---|
+| **What it answers** | Is it safe to move this agent to `muse-spark-1.2`, `1.3`, or the contributor endpoint? |
+| **Evidence** | Your agent's own recorded conversations, replayed on every candidate (3× each) with tool results served from the recording |
+| **Seven checks** | Run errors · tool-call fidelity · policy rules · output schema · net judged quality · p95 latency · cost, each against a threshold you set |
+| **Verdict** | **ship**, **ship with fix**, or **don't ship**, posted on the pull request by a GitHub Action that fails the required check |
+| **Self-diagnosis** | Muse Spark 1.3 groups regressions, explains them, drafts a prompt fix, and the fix is re-tested on the whole suite before it counts |
+| **Self-test** | 150 seeded faults caught 100%, 0% false alarms; judge audit 24/24 · 12/12 · 36/36; the gate reports its own noise floor |
+| **Stack** | Python 3.11 (async router, DuckDB, JSON Schema), GitHub Action, React + Vite dashboard on GitHub Pages, 79 offline tests |
 
 ## Where Meta's models are used
 
