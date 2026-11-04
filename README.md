@@ -287,26 +287,52 @@ the job on *don't ship*. See [`.github/workflows/sparkgate.yml`](.github/workflo
 ## Project layout
 
 ```
-src/sparkgate/
-  schemas.py    domain models (traces, replays, diffs, verdicts)
-  config.py     sparkgate.yaml + environment secrets
-  providers.py  async model router: endpoints, concurrency, retries, cost, budget
-  engine.py     agent loop + recorded-tool oracle
-  diff.py       behavioral diff, schema validation, regression codes
-  policy.py     per-trace policy expectations
-  calibrate.py  seeded-fault calibration of the gate + judge audit
-  judge.py      position-swapped pairwise judge
-  fixer.py      deterministic pattern grouping + Muse Spark diagnosis/fix
-  gate.py       metrics, thresholds, decision
-  pipeline.py   orchestration
-  store.py      DuckDB history + JSON reports
-  report.py     PR-comment Markdown
-  cli.py        `sparkgate` CLI
-demo/support_agent/  the demo agent, backend, scenarios and recorder
-app/dashboard.py     Streamlit dashboard (local exploration)
-web/                 React dashboard, built from results/ and published to GitHub Pages
-action.yml           GitHub Action
-tests/               offline test suite (scripted models + a local HTTP endpoint)
+spark-gate/
+├── src/sparkgate/                 the gate (installed as the `sparkgate` CLI)
+│   ├── schemas.py                 domain models: traces, replays, diffs, verdicts, reports
+│   ├── config.py                  sparkgate.yaml loader + secrets from the environment
+│   ├── providers.py               async model router: endpoints, concurrency, retries, cost, budget
+│   ├── engine.py                  agent loop + recorded-tool oracle (no side effect runs twice)
+│   ├── diff.py                    behavioral diff: tool sequence, arguments, schema, regression codes
+│   ├── policy.py                  per-trace policy expectations, checked on every model
+│   ├── judge.py                   position-swapped pairwise quality judge
+│   ├── gate.py                    metrics, thresholds (noise-aware), ship / don't-ship decision
+│   ├── fixer.py                   deterministic regression grouping + Muse Spark diagnosis and fix
+│   ├── pipeline.py                orchestration: replay → diff → judge → gate → fix → re-test
+│   ├── calibrate.py               seeded-fault calibration of the gate + judge audit
+│   ├── store.py                   DuckDB run history + JSON reports
+│   ├── report.py                  Markdown report for PR comments (escaped)
+│   └── cli.py                     run · regate · calibrate · validate · report · history
+│
+├── demo/support_agent/            the agent under test
+│   ├── agent.py                   five-tool customer-support agent (any Muse Spark model)
+│   ├── backend.py                 fictional store backend: orders, refund rules, frozen clock
+│   ├── scenarios.jsonl            24 scenarios with policy expectations
+│   └── record.py                  records real traces on the production model
+│
+├── traces/support_agent.jsonl     the recorded conversations the gate replays
+├── results/                       committed gate reports (one JSON per run) + calibration
+├── sparkgate.yaml                 baseline, candidates, prices, thresholds, repeats, budget
+├── action.yml                     the GitHub Action
+│
+├── web/                           dashboard (React + Vite + TypeScript) → GitHub Pages
+│   ├── scripts/sync-data.mjs      copies results/ and traces/ into the site at build time
+│   ├── src/App.tsx                page shell: hero, CI band, how-a-verdict-is-made, footer
+│   ├── src/Board.tsx              the departure board (one row per candidate)
+│   ├── src/Evidence.tsx           checks matrix + cost-vs-quality chart
+│   ├── src/Fixes.tsx              regression patterns, prompt addendum, before/after
+│   ├── src/Conversations.tsx      baseline vs candidate, side by side, with the judge's reason
+│   ├── src/Stability.tsx          verdicts across runs, pooled rates with intervals
+│   ├── src/Trust.tsx              calibration and judge-audit results
+│   └── public/                    link-preview image + the synced data
+│
+├── app/dashboard.py               Streamlit dashboard for local exploration
+├── tests/                         79 offline tests (scripted models + a local OpenAI-compatible server)
+├── docs/architecture.png          the architecture diagram above
+└── .github/workflows/
+    ├── ci.yml                     ruff + pytest on every push and PR
+    ├── sparkgate.yml              runs the gate on pull requests that touch the agent or config
+    └── pages.yml                  builds and deploys the dashboard
 ```
 
 ## Tests
